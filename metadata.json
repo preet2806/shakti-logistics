@@ -1,0 +1,7 @@
+{
+  "name": "Shakti Logistics",
+  "description": "A high-performance logistics management portal for cryogenic tanker distribution, featuring complex routing, split unloading, and automated diesel tracking.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
