@@ -33,7 +33,6 @@ export async function fetchRoutes(
 /**
  * Calculates the great-circle distance between two points (Haversine formula)
  * Returns distance in kilometers.
- * Added to fix missing export error in TripList.tsx.
  */
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Radius of the earth in km
@@ -58,10 +57,16 @@ export const formatLiters = (qty: number) => `${Math.round(qty)} L`;
 
 export const getNextTripStatus = (current: TripStatus): TripStatus[] => {
   switch (current) {
-    case TripStatus.PLANNED: return [TripStatus.LOADED_AT_SUPPLIER, TripStatus.CANCELLED];
-    case TripStatus.LOADED_AT_SUPPLIER: return [TripStatus.IN_TRANSIT];
-    case TripStatus.IN_TRANSIT: return [TripStatus.PARTIALLY_UNLOADED, TripStatus.CLOSED];
-    case TripStatus.PARTIALLY_UNLOADED: return [TripStatus.PARTIALLY_UNLOADED, TripStatus.CLOSED];
-    default: return [];
+    case TripStatus.PLANNED:
+    case TripStatus.TENTATIVE:
+      return [TripStatus.LOADED_AT_SUPPLIER, TripStatus.CANCELLED];
+    case TripStatus.LOADED_AT_SUPPLIER:
+      return [TripStatus.IN_TRANSIT];
+    case TripStatus.IN_TRANSIT:
+      return [TripStatus.PARTIALLY_UNLOADED, TripStatus.CLOSED];
+    case TripStatus.PARTIALLY_UNLOADED:
+      return [TripStatus.PARTIALLY_UNLOADED, TripStatus.CLOSED];
+    default:
+      return [];
   }
 };

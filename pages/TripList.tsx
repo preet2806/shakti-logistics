@@ -3,9 +3,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Plus, Search, Filter, Calendar, Truck, ArrowRight, CheckCircle2,
-  Droplets, MapPin, Fuel, AlertCircle, X, Save, Trash2, ChevronRight, Navigation, Edit2
+  Droplets, MapPin, Fuel, AlertCircle, X, Save, Trash2, ChevronRight, Navigation, Edit2, Lock, AlertTriangle
 } from 'lucide-react';
-// Corrected import path to include extension
 import { useGlobalStore } from '../store.tsx';
 import { TripStatus, BLOCKING_STATUSES, UnloadStop, Trip } from '../types.ts';
 import { STATUS_COLORS } from '../constants.tsx';
@@ -26,14 +25,47 @@ export const TripList: React.FC = () => {
     return matchesSearch && matchesStatus;
   });
 
+  const isFinalStatus = (status: TripStatus) => status === TripStatus.CLOSED || status === TripStatus.CANCELLED;
+
   const handleStatusChange = (tripId: string, newStatus: TripStatus) => {
     const trip = trips.find(t => t.id === tripId);
     if (!trip) return;
 
+    const tanker = tankers.find(v => v.id === trip.tankerId);
+    
+    // VALIDATION: STARTING A TRIP (LOADED)
+    if (newStatus === TripStatus.LOADED_AT_SUPPLIER) {
+      // 1. Check for Breakdown
+      if (tanker?.status === 'BREAKDOWN') {
+        alert(`CRITICAL ALERT: Tanker ${tanker.number} is currently marked as BREAKDOWN. You cannot start a trip with a non-operational vehicle.`);
+        return;
+      }
+
+      // 2. Check for "On Trip" (Already busy)
+      if (tanker?.status === 'ON_TRIP') {
+        const activeTrip = getActiveTripForTanker(trip.tankerId);
+        alert(`OPERATIONAL CONFLICT: Tanker ${tanker.number} is already out ON TRIP ${activeTrip ? `(#${activeTrip.id.slice(0, 8)})` : ''}. A tanker must be AVAILABLE before it can be loaded for a new deployment.`);
+        return;
+      }
+
+      // 3. Robust secondary check via trip registry
+      const activeTrip = getActiveTripForTanker(trip.tankerId);
+      if (activeTrip && activeTrip.id !== trip.id) {
+        alert(`CONFLICT: Tanker ${tanker?.number} is already associated with an active deployment (#${activeTrip.id.slice(0, 8)}).`);
+        return;
+      }
+    }
+
+    // GENERAL BREAKDOWN CHECK: Suspend all non-closing updates if broken
+    if (tanker?.status === 'BREAKDOWN' && !isFinalStatus(newStatus)) {
+      alert(`ASSET GROUNDED: Tanker ${tanker.number} is offline for breakdown. Status updates are suspended.`);
+      return;
+    }
+
     if (BLOCKING_STATUSES.includes(newStatus)) {
       const active = getActiveTripForTanker(trip.tankerId);
       if (active && active.id !== trip.id) {
-        alert(`Tanker is currently on active trip #${active.id}. Cannot activate.`);
+        alert(`Tanker is currently on active trip #${active.id.slice(0, 8)}. Cannot activate.`);
         return;
       }
     }
@@ -75,6 +107,9 @@ export const TripList: React.FC = () => {
   };
 
   const handleManageStops = (trip: Trip) => {
+    if (isFinalStatus(trip.status)) {
+      return;
+    }
     navigate(`/trips/${trip.id}`);
   };
 
@@ -107,12 +142,13 @@ export const TripList: React.FC = () => {
           const supplier = suppliers.find(s => s.id === trip.supplierId);
           const isBlocking = BLOCKING_STATUSES.includes(trip.status);
           const nextStatuses = getNextTripStatus(trip.status);
+          const isFinal = isFinalStatus(trip.status);
+          const isBreakdown = tanker?.status === 'BREAKDOWN';
           
           const completedStops = trip.unloads.filter(u => u.unloadedAt);
           
-          // Operational Location Resolver
           const reportedLocId = (() => {
-            if (trip.status === TripStatus.PLANNED) return tanker?.currentLocationId;
+            if (trip.status === TripStatus.PLANNED || trip.status === TripStatus.TENTATIVE) return tanker?.currentLocationId;
             if (trip.status === TripStatus.LOADED_AT_SUPPLIER || trip.status === TripStatus.IN_TRANSIT) return trip.supplierId;
             if (trip.status === TripStatus.PARTIALLY_UNLOADED && completedStops.length > 0) return completedStops[completedStops.length - 1].customerId;
             if (trip.status === TripStatus.CLOSED && trip.unloads.length > 0) return trip.unloads[trip.unloads.length - 1].customerId;
@@ -121,41 +157,52 @@ export const TripList: React.FC = () => {
           
           const locName = allLocations.find(l => l.id === reportedLocId)?.name || 'Processing...';
 
-          // Fuel Calculation logic for display (if issued is 0, show requirement)
           const fuelValue = trip.dieselIssuedL > 0 
             ? formatLiters(trip.dieselIssuedL) 
             : `REQ ${Math.round(trip.totalDistanceKm / (tanker?.dieselAvgKmPerL || 3.5))}L`;
 
           return (
-            <div key={trip.id} className={`bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden transition-all hover:shadow-2xl ${isBlocking ? 'ring-2 ring-blue-500/10' : ''}`}>
+            <div key={trip.id} className={`bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden transition-all hover:shadow-2xl ${isBlocking ? 'ring-2 ring-blue-500/10' : ''} ${isFinal ? 'grayscale-[0.5] opacity-90' : ''} ${isBreakdown ? 'ring-4 ring-rose-500/20' : ''}`}>
               <div className="p-10">
                 <div className="flex flex-col lg:flex-row gap-10">
                   <div className="lg:w-1/4 space-y-6">
                     <div className="flex items-center gap-5">
-                      <div className={`p-5 rounded-[2rem] ${isBlocking ? 'bg-blue-600 text-white shadow-2xl shadow-blue-600/40 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
-                        <Truck size={40} />
+                      <div className={`p-5 rounded-[2rem] ${isBlocking ? 'bg-blue-600 text-white shadow-2xl shadow-blue-600/40 animate-pulse' : isFinal ? 'bg-slate-200 text-slate-400' : isBreakdown ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                        {isBreakdown ? <AlertTriangle size={40} /> : <Truck size={40} />}
                       </div>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                           <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-none">{tanker?.number}</h3>
-                           <button onClick={() => navigate(`/trips/${trip.id}`)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg">
-                             <Edit2 size={16} />
-                           </button>
+                           <h3 className={`text-3xl font-black tracking-tight leading-none ${isBreakdown ? 'text-rose-600' : 'text-slate-900'}`}>{tanker?.number}</h3>
+                           {!isFinal && !isBreakdown && (
+                             <button onClick={() => navigate(`/trips/${trip.id}`)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg">
+                               <Edit2 size={16} />
+                             </button>
+                           )}
+                           {(isFinal || isBreakdown) && (
+                             <div className="p-2 text-slate-400">
+                               <Lock size={16} />
+                             </div>
+                           )}
                         </div>
-                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">{trip.id}</p>
+                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">{trip.id.slice(0, 8)}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                        <span className={`px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest ${STATUS_COLORS[trip.status]}`}>
                         {trip.status.replace(/_/g, ' ')}
                       </span>
+                      {isBreakdown && (
+                        <span className="px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest bg-rose-600 text-white animate-pulse">
+                          Breakdown
+                        </span>
+                      )}
                     </div>
                     <div className="pt-6 space-y-4">
                       <div className="flex items-center gap-4 text-xs font-black text-slate-400">
                         <Calendar size={18} className="text-slate-300" /> {trip.plannedStartDate}
                       </div>
-                      <div className="p-5 rounded-3xl bg-slate-900 text-white shadow-lg">
-                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">Live Activity Focus</p>
+                      <div className={`p-5 rounded-3xl text-white shadow-lg ${isBreakdown ? 'bg-rose-900' : 'bg-slate-900'}`}>
+                        <p className={`text-[9px] font-black uppercase tracking-widest mb-2 ${isBreakdown ? 'text-rose-300' : 'text-slate-500'}`}>Live Activity Focus</p>
                         <div className="flex items-start gap-3">
                           <MapPin size={18} className="text-blue-500 shrink-0 mt-0.5" />
                           <p className="text-sm font-bold truncate uppercase">{locName}</p>
@@ -183,9 +230,11 @@ export const TripList: React.FC = () => {
                         <div className="flex-1">
                            <div className="flex items-center justify-between mb-2">
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Delivery Route Progress</p>
-                             <button onClick={() => handleManageStops(trip)} className="text-[10px] font-black text-blue-600 bg-white px-4 py-2 rounded-xl border border-blue-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm uppercase">
-                               Modify Sequence
-                             </button>
+                             {!isFinal && !isBreakdown && (
+                               <button onClick={() => handleManageStops(trip)} className="text-[10px] font-black text-blue-600 bg-white px-4 py-2 rounded-xl border border-blue-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm uppercase">
+                                 Modify Sequence
+                               </button>
+                             )}
                            </div>
                            <div className="space-y-3">
                              {trip.unloads.length === 0 ? (
@@ -222,20 +271,33 @@ export const TripList: React.FC = () => {
                     </div>
                     
                     <div className="flex flex-col gap-3">
-                      {nextStatuses.map(next => (
-                        <button 
-                          key={next} 
-                          onClick={() => handleStatusChange(trip.id, next)}
-                          className={`w-full py-5 rounded-[1.5rem] text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 ${next === TripStatus.CLOSED ? 'bg-emerald-600 text-white shadow-2xl shadow-emerald-600/30 hover:bg-emerald-700' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
-                        >
-                          {next === TripStatus.CLOSED ? <CheckCircle2 size={20} /> : <ChevronRight size={20} />}
-                          Mark {next.replace(/_/g, ' ')}
-                        </button>
-                      ))}
+                      {isBreakdown ? (
+                        <div className="flex flex-col items-center justify-center gap-2 text-rose-600 font-black text-xs bg-rose-50 py-8 rounded-[1.5rem] border-2 border-rose-200 uppercase tracking-widest">
+                          <AlertTriangle size={32} />
+                          Asset Offline
+                        </div>
+                      ) : (
+                        nextStatuses.map(next => (
+                          <button 
+                            key={next} 
+                            onClick={() => handleStatusChange(trip.id, next)}
+                            className={`w-full py-5 rounded-[1.5rem] text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 ${next === TripStatus.CLOSED ? 'bg-emerald-600 text-white shadow-2xl shadow-emerald-600/30 hover:bg-emerald-700' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
+                          >
+                            {next === TripStatus.CLOSED ? <CheckCircle2 size={20} /> : <ChevronRight size={20} />}
+                            Mark {next.replace(/_/g, ' ')}
+                          </button>
+                        ))
+                      )}
                       {trip.status === TripStatus.CLOSED && (
                         <div className="flex flex-col items-center justify-center gap-2 text-emerald-600 font-black text-xs bg-emerald-50 py-8 rounded-[1.5rem] border border-emerald-100 uppercase tracking-widest">
                           <CheckCircle2 size={32} />
                           Trip Finalized
+                        </div>
+                      )}
+                      {trip.status === TripStatus.CANCELLED && !isBreakdown && (
+                        <div className="flex flex-col items-center justify-center gap-2 text-rose-600 font-black text-xs bg-rose-50 py-8 rounded-[1.5rem] border border-rose-100 uppercase tracking-widest">
+                          <X size={32} />
+                          Trip Cancelled
                         </div>
                       )}
                     </div>

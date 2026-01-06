@@ -1,7 +1,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus } from './types.ts';
+import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus, Location } from './types.ts';
+import { fetchRoutes } from './utils/helpers.ts';
 
 const supabaseUrl = (typeof process !== 'undefined' && process.env.SUPABASE_URL) || 'https://jtjxeacpveaiflutxgok.supabase.co';
 const supabaseKey = (typeof process !== 'undefined' && process.env.SUPABASE_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp0anhlYWNwdmVhaWZsdXR4Z29rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0MzYwNzMsImV4cCI6MjA4MzAxMjA3M30.1G2tGxn6i991cajuzYgVFf9LTisXgsqwP3qOU1qejhw';
@@ -83,7 +84,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               customerId: u.customer_id,
               quantityMT: Number(u.quantity_mt),
               unloadedAt: u.unloaded_at,
-              selectedRoute: u.selected_route
+              selected_route: u.selected_route
             }));
 
           return {
@@ -111,6 +112,38 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       console.error('Data Fetch Error:', error);
     }
   }, []);
+
+  const recalculatePlannedTrips = async (tankerId: string, newLocationId: string, currentSuppliers: Supplier[], currentCustomers: Customer[]) => {
+    const allLocs = [...currentSuppliers, ...currentCustomers];
+    const newLoc = allLocs.find(l => l.id === newLocationId);
+    if (!newLoc) return;
+
+    const { data: plannedTrips } = await supabase
+      .from('trips')
+      .select('*')
+      .eq('tanker_id', tankerId)
+      .eq('status', TripStatus.PLANNED);
+
+    if (!plannedTrips || plannedTrips.length === 0) return;
+
+    for (const trip of plannedTrips) {
+      const plant = currentSuppliers.find(s => s.id === trip.supplier_id);
+      if (plant) {
+        const routes = await fetchRoutes(newLoc.lat, newLoc.lng, plant.lat, plant.lng);
+        if (routes.length > 0) {
+          const optimal = routes[0];
+          const loadedDist = Number(trip.loaded_distance || 0);
+          const totalDist = Number((optimal.distanceKm + loadedDist).toFixed(1));
+          
+          await supabase.from('trips').update({
+            empty_route: optimal,
+            empty_distance: optimal.distanceKm,
+            total_distance: totalDist
+          }).eq('id', trip.id);
+        }
+      }
+    }
+  };
 
   useEffect(() => {
     const initAuth = async () => {
@@ -189,10 +222,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const unloadRecords = trip.unloads.map((u, idx) => ({
         trip_id: tripId,
         customer_id: u.customerId,
-        // Fixed: Use quantityMT instead of quantity_mt to match UnloadStop type
         quantity_mt: u.quantityMT,
         unloaded_at: u.unloadedAt,
-        // Fixed: Use selectedRoute instead of selected_route to match UnloadStop type
         selected_route: u.selectedRoute,
         sort_order: idx
       }));
@@ -222,7 +253,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           customer_id: u.customerId,
           quantity_mt: u.quantityMT,
           unloaded_at: u.unloadedAt,
-          // Fixed: Use selectedRoute instead of selected_route to match UnloadStop type
           selected_route: u.selectedRoute,
           sort_order: idx
         }));
@@ -231,28 +261,39 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const tanker = tankers.find(t => t.id === updatedTrip.tankerId);
       if (tanker) {
-        let newLoc = tanker.currentLocationId;
+        let newLocId = tanker.currentLocationId;
         let newStatus = tanker.status;
 
         if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) {
-          newLoc = updatedTrip.supplierId;
+          newLocId = updatedTrip.supplierId;
           newStatus = 'ON_TRIP';
         } else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {
-          const last = updatedTrip.unloads.filter(u => u.unloadedAt).pop();
-          if (last) newLoc = last.customerId;
+          const lastUnloaded = [...updatedTrip.unloads].reverse().find(u => !!u.unloadedAt);
+          if (lastUnloaded) newLocId = lastUnloaded.customerId;
+          newStatus = 'ON_TRIP';
         } else if (updatedTrip.status === TripStatus.CLOSED) {
           const last = updatedTrip.unloads[updatedTrip.unloads.length - 1];
-          if (last) newLoc = last.customerId;
+          if (last) newLocId = last.customerId;
+          newStatus = 'AVAILABLE';
+        } else if (updatedTrip.status === TripStatus.CANCELLED) {
           newStatus = 'AVAILABLE';
         }
-        await supabase.from('tankers').update({ current_location_id: newLoc, status: newStatus }).eq('id', tanker.id);
+
+        if (newLocId !== tanker.currentLocationId || newStatus !== tanker.status) {
+          await supabase.from('tankers').update({ 
+            current_location_id: newLocId, 
+            status: newStatus 
+          }).eq('id', tanker.id);
+          
+          await recalculatePlannedTrips(tanker.id, newLocId, suppliers, customers);
+        }
       }
     }
     await fetchData();
   };
 
   const addTanker = async (t: Tanker) => {
-    await supabase.from('tankers').insert([{
+    const { error } = await supabase.from('tankers').insert([{
       number: t.number,
       compatible_products: t.compatibleProducts,
       capacity_mt: t.capacityMT,
@@ -260,11 +301,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       current_location_id: t.currentLocationId,
       status: t.status
     }]);
+
+    if (error) {
+      console.error("Supabase Error Adding Tanker:", error.message);
+      alert(`Database Error: ${error.message}`);
+    }
     await fetchData();
   };
 
   const updateTanker = async (t: Tanker) => {
-    await supabase.from('tankers').update({
+    const oldTanker = tankers.find(o => o.id === t.id);
+    const { error } = await supabase.from('tankers').update({
       number: t.number,
       compatible_products: t.compatibleProducts,
       capacity_mt: t.capacityMT,
@@ -272,6 +319,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       current_location_id: t.currentLocationId,
       status: t.status
     }).eq('id', t.id);
+
+    if (error) {
+      console.error("Supabase Error Updating Tanker:", error.message);
+      alert(`Database Status Update Failed: ${error.message}. Please check if 'BREAKDOWN' is allowed in your database CHECK constraint.`);
+      return;
+    }
+
+    // Dynamic Breakdown Logic: Cancel active trip if tanker breaks down
+    if (t.status === 'BREAKDOWN') {
+      const activeTrip = trips.find(tr => tr.tankerId === t.id && (BLOCKING_STATUSES as any[]).includes(tr.status));
+      if (activeTrip) {
+        await supabase.from('trips').update({ status: TripStatus.CANCELLED }).eq('id', activeTrip.id);
+      }
+    }
+
+    if (oldTanker && oldTanker.currentLocationId !== t.currentLocationId) {
+      await recalculatePlannedTrips(t.id, t.currentLocationId, suppliers, customers);
+    }
+
     await fetchData();
   };
 

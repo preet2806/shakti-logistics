@@ -5,11 +5,10 @@ import {
   CheckCircle2, Clock, AlertTriangle, MapPin, 
   Navigation, Droplets
 } from 'lucide-react';
-// Corrected import path to include extension
 import { useGlobalStore } from '../store.tsx';
 import { BLOCKING_STATUSES, Tanker, Supplier, Customer, Trip, TripStatus } from '../types.ts';
 
-// Enhanced Cryogenic Tanker SVG - Represents a specialized long-cylindrical trailer
+// Enhanced Cryogenic Tanker SVG
 const TANKER_SVG = `
   <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M52 38H12C9.79086 38 8 36.2091 8 34V22C8 19.7909 9.79086 18 12 18H52C54.2091 18 56 19.7909 56 22V34C56 36.2091 54.2091 38 52 38Z" fill="currentColor"/>
@@ -56,15 +55,15 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips 
 
     const bounds: L.LatLngExpression[] = [];
 
-    const createTankerIcon = (color: string, number: string, statusText: string, isEnroute: boolean) => L.divIcon({
+    const createTankerIcon = (color: string, number: string, statusText: string, isEnroute: boolean, isBreakdown: boolean) => L.divIcon({
       className: 'custom-marker',
       html: `
         <div class="relative flex flex-col items-center group">
-          <!-- Pulse Effect for Active Trips -->
           ${isEnroute ? `<div class="absolute inset-0 bg-${color}-500/20 rounded-full animate-ping -z-10" style="background-color: ${color}33; width: 40px; height: 40px; margin: auto;"></div>` : ''}
           
           <div class="relative flex items-center justify-center bg-white p-1 rounded-xl shadow-xl border-2 transition-transform hover:scale-110" style="border-color: ${color}">
             <div style="width: 36px; height: 36px; color: ${color};">${TANKER_SVG}</div>
+            ${isBreakdown ? `<div class="absolute -top-1 -right-1 bg-rose-600 text-white p-0.5 rounded-full shadow-lg border-2 border-white"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg></div>` : ''}
           </div>
           
           <div class="mt-1 flex flex-col items-center">
@@ -90,9 +89,6 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips 
             <div class="w-4 h-4 rounded-full border-2 border-white shadow-md flex items-center justify-center" style="background-color: ${color}">
                <div class="w-1.5 h-1.5 bg-white rounded-full"></div>
             </div>
-            <div class="mt-1 px-2 py-0.5 bg-white/90 backdrop-blur-sm rounded-md border border-slate-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity">
-              <span class="text-[8px] font-bold text-slate-800 uppercase tracking-tighter whitespace-nowrap">${name}</span>
-            </div>
           </div>
         `,
         iconSize: [20, 20],
@@ -116,11 +112,15 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips 
       const activeTrip = trips.find(tr => tr.tankerId === t.id && BLOCKING_STATUSES.includes(tr.status));
       const currentLoc = [...suppliers, ...customers].find(l => l.id === t.currentLocationId);
       
-      let color = '#10b981'; // Default: Available
+      let color = '#10b981'; // Available
       let statusText = 'READY';
       let isEnroute = false;
+      let isBreakdown = t.status === 'BREAKDOWN';
 
-      if (activeTrip) {
+      if (isBreakdown) {
+        color = '#e11d48'; // Rose-600
+        statusText = 'BREAKDOWN';
+      } else if (activeTrip) {
         isEnroute = true;
         if (activeTrip.status === TripStatus.LOADED_AT_SUPPLIER) {
           color = '#f59e0b';
@@ -133,7 +133,6 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips 
           statusText = 'DELIVERING';
         }
 
-        // Draw Actual Road Paths
         if (activeTrip.emptyRoute?.geometry) {
            L.polyline(activeTrip.emptyRoute.geometry, { color: '#64748b', weight: 2, dashArray: '8, 12', opacity: 0.3 }).addTo(markerLayer);
         }
@@ -143,24 +142,23 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips 
           }
         });
 
-        // Position tanker at current active leg's midpoint or destination
         const nextStop = activeTrip.unloads.find(u => !u.unloadedAt);
         if (nextStop?.selectedRoute?.geometry) {
           const geo = nextStop.selectedRoute.geometry;
           const posIdx = Math.floor(geo.length * 0.7);
           const pos = geo[posIdx];
           bounds.push(pos);
-          L.marker(pos, { icon: createTankerIcon(color, t.number, statusText, true), zIndexOffset: 2000 })
+          L.marker(pos, { icon: createTankerIcon(color, t.number, statusText, true, false), zIndexOffset: 2000 })
             .addTo(markerLayer);
         } else if (currentLoc) {
           const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
           bounds.push(pos);
-          L.marker(pos, { icon: createTankerIcon(color, t.number, statusText, false), zIndexOffset: 2000 }).addTo(markerLayer);
+          L.marker(pos, { icon: createTankerIcon(color, t.number, statusText, false, false), zIndexOffset: 2000 }).addTo(markerLayer);
         }
       } else if (currentLoc) {
         const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
         bounds.push(pos);
-        L.marker(pos, { icon: createTankerIcon(color, t.number, statusText, false), zIndexOffset: 1000 }).addTo(markerLayer);
+        L.marker(pos, { icon: createTankerIcon(color, t.number, statusText, false, isBreakdown), zIndexOffset: 1000 }).addTo(markerLayer);
       }
     });
 
@@ -174,6 +172,7 @@ export const Dashboard: React.FC = () => {
   const { trips, tankers, customers, suppliers } = useGlobalStore();
   const activeTrips = trips.filter(t => BLOCKING_STATUSES.includes(t.status));
   const availableTankers = tankers.filter(t => t.status === 'AVAILABLE').length;
+  const breakdownCount = tankers.filter(t => t.status === 'BREAKDOWN').length;
 
   const totalDiesel = trips.reduce((acc, t) => acc + (Number(t.dieselIssuedL) || 0), 0);
 
@@ -191,9 +190,9 @@ export const Dashboard: React.FC = () => {
           { label: 'Live Operations', value: activeTrips.length, icon: Navigation, color: 'text-blue-600', bg: 'bg-blue-50' },
           { label: 'Ready for Duty', value: availableTankers, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
           { label: 'Diesel Utilized', value: `${Math.round(totalDiesel)}L`, icon: Droplets, color: 'text-amber-600', bg: 'bg-amber-50' },
-          //{ label: 'Critical Tasks', value: 0, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' },
+          { label: 'Breakdown Alerts', value: breakdownCount, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' },
         ].map((stat) => (
-          <div key={stat.label} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex items-center gap-4 hover:border-blue-200 transition-all hover:shadow-md">
+          <div key={stat.label} className={`bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex items-center gap-4 hover:border-blue-200 transition-all hover:shadow-md ${stat.label === 'Breakdown Alerts' && breakdownCount > 0 ? 'border-rose-300 ring-4 ring-rose-500/5' : ''}`}>
             <div className={`${stat.bg} ${stat.color} p-4 rounded-2xl`}><stat.icon size={24} /></div>
             <div>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">{stat.label}</p>
@@ -209,7 +208,7 @@ export const Dashboard: React.FC = () => {
             <h2 className="font-black text-slate-900 uppercase text-xs tracking-widest flex items-center gap-3"><MapPin size={20} className="text-blue-600" /> Live Road Tracking</h2>
             <div className="flex items-center gap-6">
                <span className="flex items-center gap-2 text-[10px] font-black text-blue-600 uppercase tracking-widest"><div className="w-2.5 h-2.5 rounded-full bg-blue-600"></div> Transit</span>
-               <span className="flex items-center gap-2 text-[10px] font-black text-amber-500 uppercase tracking-widest"><div className="w-2.5 h-2.5 rounded-full bg-amber-500"></div> Loading</span>
+               <span className="flex items-center gap-2 text-[10px] font-black text-rose-500 uppercase tracking-widest"><div className="w-2.5 h-2.5 rounded-full bg-rose-500"></div> Breakdown</span>
                <span className="flex items-center gap-2 text-[10px] font-black text-emerald-500 uppercase tracking-widest"><div className="w-2.5 h-2.5 rounded-full bg-emerald-500"></div> Available</span>
             </div>
           </div>

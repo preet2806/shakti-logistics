@@ -34,7 +34,7 @@ export type Tanker = {
   capacityMT: number;
   dieselAvgKmPerL: number;
   currentLocationId: string;
-  status: 'AVAILABLE' | 'ON_TRIP';
+  status: 'AVAILABLE' | 'ON_TRIP' | 'BREAKDOWN';
 };
 
 export const TripStatus = {
@@ -42,7 +42,6 @@ export const TripStatus = {
   TENTATIVE: 'TENTATIVE',
   LOADED_AT_SUPPLIER: 'LOADED_AT_SUPPLIER',
   IN_TRANSIT: 'IN_TRANSIT',
-  // Fixed syntax error: changed = to :
   PARTIALLY_UNLOADED: 'PARTIALLY_UNLOADED',
   CLOSED: 'CLOSED',
   CANCELLED: 'CANCELLED'
