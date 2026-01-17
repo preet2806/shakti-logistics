@@ -113,30 +113,47 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
         else if (activeTrip.status === TripStatus.IN_TRANSIT) color = '#2563eb';
         else if (activeTrip.status === TripStatus.PARTIALLY_UNLOADED) color = '#a855f7';
 
-        // Draw active path
-        activeTrip.unloads.forEach(stop => {
-          if (stop.selectedRoute?.geometry) {
-            L.polyline(stop.selectedRoute.geometry, { color, weight: 2, opacity: 0.3, dashArray: '5, 5' }).addTo(markerLayer);
+        // Logic for current leg pathing
+        const nextStopIdx = activeTrip.unloads.findIndex(u => !u.unloadedAt);
+        const nextStop = nextStopIdx !== -1 ? activeTrip.unloads[nextStopIdx] : null;
+
+        if (nextStop?.selectedRoute?.geometry) {
+          const geo = nextStop.selectedRoute.geometry;
+          // Draw the dotted line for the ACTIVE leg only
+          L.polyline(geo, {
+            color,
+            weight: 3,
+            opacity: 0.6,
+            dashArray: '10, 10'
+          }).addTo(markerLayer);
+
+          // Place tanker icon 60% along the path to simulate movement
+          const pos = geo[Math.floor(geo.length * 0.6)];
+          bounds.push(pos);
+          L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
+            .addTo(markerLayer)
+            .on('mouseover', () => onHover(t.id))
+            .on('mouseout', () => onHover(null));
+        } else if (currentLoc) {
+          // Fallback to location if route geometry missing
+          const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
+          bounds.push(pos);
+          L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
+            .addTo(markerLayer)
+            .on('mouseover', () => onHover(t.id))
+            .on('mouseout', () => onHover(null));
+        }
+
+        // Faint lines for future legs
+        activeTrip.unloads.forEach((stop, idx) => {
+          if (idx > nextStopIdx && stop.selectedRoute?.geometry) {
+            L.polyline(stop.selectedRoute.geometry, {
+              color: '#94a3b8',
+              weight: 1,
+              opacity: 0.2
+            }).addTo(markerLayer);
           }
         });
-
-        const nextStop = activeTrip.unloads.find(u => !u.unloadedAt);
-        if (nextStop?.selectedRoute?.geometry) {
-            const geo = nextStop.selectedRoute.geometry;
-            const pos = geo[Math.floor(geo.length * 0.6)];
-            bounds.push(pos);
-            L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
-              .addTo(markerLayer)
-              .on('mouseover', () => onHover(t.id))
-              .on('mouseout', () => onHover(null));
-        } else if (currentLoc) {
-            const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
-            bounds.push(pos);
-            L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
-              .addTo(markerLayer)
-              .on('mouseover', () => onHover(t.id))
-              .on('mouseout', () => onHover(null));
-        }
       } else if (currentLoc) {
         const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
         bounds.push(pos);
@@ -161,7 +178,14 @@ export const Dashboard: React.FC = () => {
   const activeTripsCount = useMemo(() => trips.filter(t => BLOCKING_STATUSES.includes(t.status)).length, [trips]);
   const availableCount = useMemo(() => tankers.filter(t => t.status === 'AVAILABLE').length, [tankers]);
   const breakdownCount = useMemo(() => tankers.filter(t => t.status === 'BREAKDOWN').length, [tankers]);
-  const totalLiters = useMemo(() => trips.reduce((acc, t) => acc + (Number(t.dieselIssuedL) || 0), 0), [trips]);
+
+  // Calculate Diesel Utilized for current date only
+  const todayLiters = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return trips
+      .filter(t => t.plannedStartDate === today)
+      .reduce((acc, t) => acc + (Number(t.dieselIssuedL) || 0), 0);
+  }, [trips]);
 
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
@@ -182,7 +206,7 @@ export const Dashboard: React.FC = () => {
         {[
           { label: 'Live Operations', val: activeTripsCount, icon: Navigation, color: 'text-blue-600', bg: 'bg-blue-50' },
           { label: 'Ready for Duty', val: availableCount, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Diesel Utilized', val: `${Math.round(totalLiters)}L`, icon: Droplets, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Today\'s Diesel', val: `${Math.round(todayLiters)}L`, icon: Droplets, color: 'text-amber-600', bg: 'bg-amber-50' },
           { label: 'Breakdown Alerts', val: breakdownCount, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' },
         ].map((stat, i) => (
           <div key={i} className="bg-white border border-slate-200 p-8 rounded-[2.5rem] flex items-center justify-between shadow-sm hover:shadow-md transition-shadow">
@@ -242,9 +266,13 @@ export const Dashboard: React.FC = () => {
                  </div>
                  <div className="space-y-2 border-t border-white/10 pt-4">
                     <div className="flex justify-between">
-                       <span className="text-[9px] font-black text-slate-500 uppercase">State</span>
+                       <span className="text-[9px] font-black text-slate-500 uppercase">Status</span>
                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">
-                         {tankers.find(t => t.id === hoveredTankerId)?.status}
+                         {(() => {
+                           const tanker = tankers.find(t => t.id === hoveredTankerId);
+                           const activeTrip = trips.find(tr => tr.tankerId === hoveredTankerId && BLOCKING_STATUSES.includes(tr.status));
+                           return activeTrip ? activeTrip.status.replace(/_/g, ' ') : tanker?.status;
+                         })()}
                        </span>
                     </div>
                     <div className="flex justify-between">
