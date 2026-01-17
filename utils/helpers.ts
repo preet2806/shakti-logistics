@@ -58,14 +58,20 @@ export const formatLiters = (qty: number) => `${Math.round(qty)} L`;
 export const getNextTripStatus = (current: TripStatus): TripStatus[] => {
   switch (current) {
     case TripStatus.PLANNED:
-    case TripStatus.TENTATIVE:
+      // Initial move is TRANSIT_TO_SUPPLIER
+      return [TripStatus.TRANSIT_TO_SUPPLIER, TripStatus.CANCELLED];
+    case TripStatus.TRANSIT_TO_SUPPLIER:
+      // Arrived at the plant
       return [TripStatus.LOADED_AT_SUPPLIER, TripStatus.CANCELLED];
     case TripStatus.LOADED_AT_SUPPLIER:
-      return [TripStatus.IN_TRANSIT];
+      // Start transit to the first customer
+      return [TripStatus.IN_TRANSIT, TripStatus.CANCELLED];
     case TripStatus.IN_TRANSIT:
+      // Arrived and unloading
       return [TripStatus.PARTIALLY_UNLOADED, TripStatus.CLOSED];
     case TripStatus.PARTIALLY_UNLOADED:
-      return [TripStatus.PARTIALLY_UNLOADED, TripStatus.CLOSED];
+      // Move to next or Close
+      return [TripStatus.IN_TRANSIT, TripStatus.CLOSED];
     default:
       return [];
   }

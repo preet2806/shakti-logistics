@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus, Location } from './types.ts';
@@ -63,9 +62,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (sRes.data) setSuppliers(sRes.data.map(s => ({ ...s, isOperational: s.is_operational !== false })));
       if (cRes.data) setCustomers(cRes.data.map(c => ({ ...c, isOperational: c.is_operational !== false })));
       if (usrRes.data) setUsers(usrRes.data);
-
+      
       if (tRes.data) {
-        setTankers(tRes.data.map(t => ({
+        setTankers(tRes.data.map(t => ({ 
           id: t.id,
           number: t.number,
           compatibleProducts: t.compatible_products || [],
@@ -226,7 +225,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customer_id: u.customerId,
         quantity_mt: u.quantityMT,
         unloaded_at: u.unloadedAt,
-        selected_route: u.selectedRoute,
+        selected_route: u.selectedRoute, // Corrected to snake_case for DB
         sort_order: idx,
         challan_number: u.challanNumber,
         actual_quantity_mt: u.actualQuantityMT
@@ -244,7 +243,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       diesel_issued: updatedTrip.dieselIssuedL,
       diesel_used: updatedTrip.dieselUsedL,
       empty_distance: updatedTrip.emptyDistanceKm,
-      loaded_distance: updatedTrip.loadedDistanceKm,
+      loaded_distance: updatedTrip.loadedDistanceKm || 0,
       total_distance: updatedTrip.totalDistanceKm,
       remarks: updatedTrip.remarks
     }).eq('id', updatedTrip.id);
@@ -257,7 +256,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           customer_id: u.customerId,
           quantity_mt: u.quantityMT,
           unloaded_at: u.unloadedAt,
-          selected_route: u.selectedRoute,
+          selected_route: u.selectedRoute, // Corrected to snake_case for DB
           sort_order: idx,
           challan_number: u.challanNumber,
           actual_quantity_mt: u.actualQuantityMT
@@ -270,7 +269,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         let newLocId = tanker.currentLocationId;
         let newStatus = tanker.status;
 
-        if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) {
+        if (updatedTrip.status === TripStatus.TRANSIT_TO_SUPPLIER) {
+          newStatus = 'ON_TRIP';
+        } else if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) {
           newLocId = updatedTrip.supplierId;
           newStatus = 'ON_TRIP';
         } else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {
@@ -286,11 +287,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         if (newLocId !== tanker.currentLocationId || newStatus !== tanker.status) {
-          await supabase.from('tankers').update({
-            current_location_id: newLocId,
-            status: newStatus
+          await supabase.from('tankers').update({ 
+            current_location_id: newLocId, 
+            status: newStatus 
           }).eq('id', tanker.id);
-
+          
           await recalculatePlannedTrips(tanker.id, newLocId, suppliers, customers);
         }
       }
@@ -307,7 +308,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       current_location_id: t.currentLocationId,
       status: t.status
     }]);
-
+    
     if (error) {
       console.error("Supabase Error Adding Tanker:", error.message);
       alert(`Database Error: ${error.message}`);
@@ -332,14 +333,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    // Dynamic Breakdown Logic: Cancel active trip if tanker breaks down
     if (t.status === 'BREAKDOWN') {
       const activeTrip = trips.find(tr => tr.tankerId === t.id && (BLOCKING_STATUSES as any[]).includes(tr.status));
       if (activeTrip) {
-        const autoRemark = activeTrip.remarks
-          ? `${activeTrip.remarks} | AUTO-CANCELLED: Asset reported BREAKDOWN.`
+        const autoRemark = activeTrip.remarks 
+          ? `${activeTrip.remarks} | AUTO-CANCELLED: Asset reported BREAKDOWN.` 
           : 'AUTO-CANCELLED: Asset reported BREAKDOWN.';
-        await supabase.from('trips').update({
+        await supabase.from('trips').update({ 
           status: TripStatus.CANCELLED,
           remarks: autoRemark
         }).eq('id', activeTrip.id);
@@ -364,12 +364,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateSupplier = async (s: Supplier) => {
-    await supabase.from('suppliers').update({
-      name: s.name,
-      address: s.address,
-      lat: s.lat,
+    await supabase.from('suppliers').update({ 
+      name: s.name, 
+      address: s.address, 
+      lat: s.lat, 
       lng: s.lng,
-      is_operational: s.isOperational
+      is_operational: s.isOperational 
     }).eq('id', s.id);
     await fetchData();
   };
@@ -385,12 +385,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateCustomer = async (c: Customer) => {
-    await supabase.from('customers').update({
-      name: c.name,
-      address: c.address,
-      lat: c.lat,
+    await supabase.from('customers').update({ 
+      name: c.name, 
+      address: c.address, 
+      lat: c.lat, 
       lng: c.lng,
-      is_operational: c.isOperational
+      is_operational: c.isOperational 
     }).eq('id', c.id);
     await fetchData();
   };

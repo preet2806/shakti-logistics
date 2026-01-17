@@ -108,9 +108,9 @@ export const TripList: React.FC = () => {
     const tanker = tankers.find(v => v.id === trip.tankerId);
 
     // Validations
-    if (newStatus === TripStatus.LOADED_AT_SUPPLIER) {
+    if (newStatus === TripStatus.TRANSIT_TO_SUPPLIER || newStatus === TripStatus.LOADED_AT_SUPPLIER) {
       if (tanker?.status === 'BREAKDOWN') { alert(`CRITICAL ALERT: Tanker ${tanker.number} is in BREAKDOWN.`); return; }
-      if (tanker?.status === 'ON_TRIP') { alert(`CONFLICT: Tanker already out ON TRIP.`); return; }
+      if (tanker?.status === 'ON_TRIP' && trip.status === TripStatus.PLANNED) { alert(`CONFLICT: Tanker already out ON TRIP.`); return; }
     }
     if (tanker?.status === 'BREAKDOWN' && !isFinalStatus(newStatus)) { alert(`ASSET GROUNDED.`); return; }
 
@@ -119,35 +119,38 @@ export const TripList: React.FC = () => {
       if (active && active.id !== trip.id) { alert(`Tanker is currently on active trip.`); return; }
     }
 
-    if ((newStatus === TripStatus.IN_TRANSIT || newStatus === TripStatus.PARTIALLY_UNLOADED) && trip.unloads.length === 0) {
-      alert("A delivery route must be configured before this action.");
+    // Logic for Delivery Legs
+    const pendingStopIdx = trip.unloads.findIndex(u => !u.unloadedAt);
+
+    if (newStatus === TripStatus.IN_TRANSIT && pendingStopIdx === -1) {
+      alert("Manifest exhausted. Please add a next destination to continue transit or Close the trip.");
+      navigate(`/trips/${trip.id}`);
+      return;
+    }
+
+    if (newStatus === TripStatus.PARTIALLY_UNLOADED && pendingStopIdx === -1) {
+      alert("No active destination to unload at. Update manifest first.");
       navigate(`/trips/${trip.id}`);
       return;
     }
 
     // Capture Intelligence Interception
     if (newStatus === TripStatus.IN_TRANSIT) {
-       const nextStopIdx = trip.unloads.findIndex(u => !u.unloadedAt);
-       if (nextStopIdx !== -1) {
-          const cust = customers.find(c => c.id === trip.unloads[nextStopIdx].customerId);
-          setActionData({
-            tripId, newStatus, type: 'CHALLAN', stopIndex: nextStopIdx,
-            title: 'Capture Challan Number', customerName: cust?.name
-          });
-          return;
-       }
+       const cust = customers.find(c => c.id === trip.unloads[pendingStopIdx].customerId);
+       setActionData({
+         tripId, newStatus, type: 'CHALLAN', stopIndex: pendingStopIdx,
+         title: 'Capture Challan Number', customerName: cust?.name
+       });
+       return;
     }
 
     if (newStatus === TripStatus.PARTIALLY_UNLOADED) {
-      const nextStopIdx = trip.unloads.findIndex(u => !u.unloadedAt);
-      if (nextStopIdx !== -1) {
-         const cust = customers.find(c => c.id === trip.unloads[nextStopIdx].customerId);
-         setActionData({
-            tripId, newStatus, type: 'DECANTING', stopIndex: nextStopIdx,
-            title: 'Capture Actual Decanting', customerName: cust?.name
-         });
-         return;
-      }
+       const cust = customers.find(c => c.id === trip.unloads[pendingStopIdx].customerId);
+       setActionData({
+          tripId, newStatus, type: 'DECANTING', stopIndex: pendingStopIdx,
+          title: 'Capture Actual Decanting', customerName: cust?.name
+       });
+       return;
     }
 
     updateTrip({ ...trip, status: newStatus });

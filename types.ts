@@ -40,7 +40,7 @@ export type Tanker = {
 
 export const TripStatus = {
   PLANNED: 'PLANNED',
-  TENTATIVE: 'TENTATIVE',
+  TRANSIT_TO_SUPPLIER: 'TRANSIT_TO_SUPPLIER',
   LOADED_AT_SUPPLIER: 'LOADED_AT_SUPPLIER',
   IN_TRANSIT: 'IN_TRANSIT',
   PARTIALLY_UNLOADED: 'PARTIALLY_UNLOADED',
@@ -51,6 +51,7 @@ export const TripStatus = {
 export type TripStatus = (typeof TripStatus)[keyof typeof TripStatus];
 
 export const BLOCKING_STATUSES: TripStatus[] = [
+  'TRANSIT_TO_SUPPLIER',
   'LOADED_AT_SUPPLIER',
   'IN_TRANSIT',
   'PARTIALLY_UNLOADED'

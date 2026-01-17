@@ -1,11 +1,9 @@
-
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import L from 'leaflet';
-import {
-  CheckCircle2, AlertTriangle, MapPin,
+import { 
+  CheckCircle2, AlertTriangle, MapPin, 
   Navigation, Droplets, Activity, Zap, Truck,
-  ShieldCheck, AlertCircle, ChevronRight, Gauge, BarChart3,
-  Container, Layers, Radar, Target, Info
+  ChevronRight, Gauge, Layers, Radar
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGlobalStore } from '../store.tsx';
@@ -76,66 +74,105 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
       iconAnchor: [30, 40]
     });
 
-    const createSiteIcon = (type: 'PLANT' | 'SITE') => {
+    const createSiteIcon = (type: 'PLANT' | 'SITE', name: string) => {
       const color = type === 'PLANT' ? '#2563eb' : '#64748b';
       return L.divIcon({
         className: 'custom-marker',
-        html: `<div class="w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm" style="background-color: ${color}"></div>`,
-        iconSize: [10, 10],
-        iconAnchor: [5, 5]
+        html: `
+          <div class="flex flex-col items-center">
+            <div class="w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm transition-transform hover:scale-150" style="background-color: ${color}"></div>
+            <span class="text-[6px] font-black uppercase text-slate-400 mt-0.5 whitespace-nowrap opacity-0 hover:opacity-100 transition-opacity">${name}</span>
+          </div>
+        `,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20]
       });
     };
 
-    // Filter operational suppliers/customers
     const activeSuppliers = suppliers.filter(s => s.isOperational);
     const activeCustomers = customers.filter(c => c.isOperational);
 
     activeSuppliers.forEach(s => {
       const pos: L.LatLngExpression = [s.lat, s.lng];
       bounds.push(pos);
-      L.marker(pos, { icon: createSiteIcon('PLANT') }).addTo(markerLayer).bindTooltip(s.name);
+      L.marker(pos, { icon: createSiteIcon('PLANT', s.name) }).addTo(markerLayer).bindTooltip(s.name, { direction: 'top', offset: [0, -10] });
     });
 
     activeCustomers.forEach(c => {
       const pos: L.LatLngExpression = [c.lat, c.lng];
       bounds.push(pos);
-      L.marker(pos, { icon: createSiteIcon('SITE') }).addTo(markerLayer).bindTooltip(c.name);
+      L.marker(pos, { icon: createSiteIcon('SITE', c.name) }).addTo(markerLayer).bindTooltip(c.name, { direction: 'top', offset: [0, -10] });
     });
 
     tankers.forEach(t => {
       const activeTrip = trips.find(tr => tr.tankerId === t.id && BLOCKING_STATUSES.includes(tr.status));
       const currentLoc = [...suppliers, ...customers].find(l => l.id === t.currentLocationId);
-
-      let color = '#10b981'; // Default Available
+      
+      let color = '#10b981'; 
       if (t.status === 'BREAKDOWN') color = '#e11d48';
       else if (activeTrip) {
-        if (activeTrip.status === TripStatus.LOADED_AT_SUPPLIER) color = '#f59e0b';
+        if (activeTrip.status === TripStatus.TRANSIT_TO_SUPPLIER) color = '#6366f1'; 
+        else if (activeTrip.status === TripStatus.LOADED_AT_SUPPLIER) color = '#f59e0b';
         else if (activeTrip.status === TripStatus.IN_TRANSIT) color = '#2563eb';
         else if (activeTrip.status === TripStatus.PARTIALLY_UNLOADED) color = '#a855f7';
 
-        // Logic for current leg pathing
         const nextStopIdx = activeTrip.unloads.findIndex(u => !u.unloadedAt);
-        const nextStop = nextStopIdx !== -1 ? activeTrip.unloads[nextStopIdx] : null;
-
-        if (nextStop?.selectedRoute?.geometry) {
-          const geo = nextStop.selectedRoute.geometry;
-          // Draw the dotted line for the ACTIVE leg only
-          L.polyline(geo, {
-            color,
-            weight: 3,
-            opacity: 0.6,
-            dashArray: '10, 10'
+        
+        // Draw Leg 1: Empty run to Plant
+        if (activeTrip.emptyRoute?.geometry) {
+          const isActiveLeg = activeTrip.status === TripStatus.TRANSIT_TO_SUPPLIER;
+          L.polyline(activeTrip.emptyRoute.geometry, { 
+            color: isActiveLeg ? color : '#94a3b8', 
+            weight: isActiveLeg ? 3 : 1, 
+            opacity: isActiveLeg ? 0.8 : 0.2, 
+            dashArray: isActiveLeg ? '10, 10' : undefined 
           }).addTo(markerLayer);
 
-          // Place tanker icon 60% along the path to simulate movement
-          const pos = geo[Math.floor(geo.length * 0.6)];
-          bounds.push(pos);
-          L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
-            .addTo(markerLayer)
-            .on('mouseover', () => onHover(t.id))
-            .on('mouseout', () => onHover(null));
-        } else if (currentLoc) {
-          // Fallback to location if route geometry missing
+          if (isActiveLeg) {
+            const geo = activeTrip.emptyRoute.geometry;
+            const pos = geo[Math.floor(geo.length * 0.5)];
+            bounds.push(pos);
+            L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
+              .addTo(markerLayer)
+              .on('mouseover', () => onHover(t.id))
+              .on('mouseout', () => onHover(null));
+          }
+        }
+
+        // Draw Legs 2+: Deliveries between customers
+        activeTrip.unloads.forEach((stop, idx) => {
+          if (stop.selectedRoute?.geometry) {
+            const isActiveLeg = activeTrip.status === TripStatus.IN_TRANSIT && idx === nextStopIdx;
+            const isPast = idx < nextStopIdx;
+            
+            // Only draw current and future legs
+            if (!isPast) {
+              L.polyline(stop.selectedRoute.geometry, { 
+                color: isActiveLeg ? color : '#94a3b8', 
+                weight: isActiveLeg ? 3 : 1, 
+                opacity: isActiveLeg ? 0.8 : 0.2,
+                dashArray: isActiveLeg ? '10, 10' : undefined
+              }).addTo(markerLayer);
+            }
+
+            if (isActiveLeg) {
+              const geo = stop.selectedRoute.geometry;
+              const pos = geo[Math.floor(geo.length * 0.6)];
+              bounds.push(pos);
+              L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
+                .addTo(markerLayer)
+                .on('mouseover', () => onHover(t.id))
+                .on('mouseout', () => onHover(null));
+            }
+          }
+        });
+
+        // Draw stationary marker if at plant or site
+        const isStationary = activeTrip.status === TripStatus.LOADED_AT_SUPPLIER || 
+                             activeTrip.status === TripStatus.PARTIALLY_UNLOADED ||
+                             activeTrip.status === TripStatus.PLANNED;
+        
+        if (isStationary && currentLoc) {
           const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
           bounds.push(pos);
           L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
@@ -143,18 +180,8 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
             .on('mouseover', () => onHover(t.id))
             .on('mouseout', () => onHover(null));
         }
-
-        // Faint lines for future legs
-        activeTrip.unloads.forEach((stop, idx) => {
-          if (idx > nextStopIdx && stop.selectedRoute?.geometry) {
-            L.polyline(stop.selectedRoute.geometry, {
-              color: '#94a3b8',
-              weight: 1,
-              opacity: 0.2
-            }).addTo(markerLayer);
-          }
-        });
       } else if (currentLoc) {
+        // Available tankers
         const pos: L.LatLngExpression = [currentLoc.lat, currentLoc.lng];
         bounds.push(pos);
         L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 1000 })
@@ -164,32 +191,32 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
       }
     });
 
-    if (bounds.length > 0) map.fitBounds(L.latLngBounds(bounds), { padding: [100, 100], animate: true });
-  }, [tankers, trips, suppliers, customers, onHover]);
+    if (bounds.length > 0) {
+      map.fitBounds(L.latLngBounds(bounds), { padding: [80, 80], maxZoom: 8 });
+    }
+  }, [tankers, suppliers, customers, trips, onHover]);
 
-  return <div className="w-full h-full"><div ref={mapContainerRef} className="w-full h-full z-0" /></div>;
+  return <div ref={mapContainerRef} className="w-full h-full min-h-[700px] z-10" />;
 };
 
 export const Dashboard: React.FC = () => {
-  const navigate = useNavigate();
   const { trips, tankers, customers, suppliers } = useGlobalStore();
   const [hoveredTankerId, setHoveredTankerId] = useState<string | null>(null);
-
-  const activeTripsCount = useMemo(() => trips.filter(t => BLOCKING_STATUSES.includes(t.status)).length, [trips]);
-  const availableCount = useMemo(() => tankers.filter(t => t.status === 'AVAILABLE').length, [tankers]);
-  const breakdownCount = useMemo(() => tankers.filter(t => t.status === 'BREAKDOWN').length, [tankers]);
-
-  // Calculate Diesel Utilized for current date only
-  const todayLiters = useMemo(() => {
+  
+  const stats = useMemo(() => {
+    const activeTripsCount = trips.filter(t => BLOCKING_STATUSES.includes(t.status)).length;
+    const availableCount = tankers.filter(t => t.status === 'AVAILABLE').length;
+    const breakdownCount = tankers.filter(t => t.status === 'BREAKDOWN').length;
     const today = new Date().toISOString().split('T')[0];
-    return trips
+    const todayLiters = trips
       .filter(t => t.plannedStartDate === today)
       .reduce((acc, t) => acc + (Number(t.dieselIssuedL) || 0), 0);
-  }, [trips]);
+    
+    return { activeTripsCount, availableCount, todayLiters, breakdownCount };
+  }, [trips, tankers]);
 
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
-      {/* 1. Header Section */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-4xl font-black text-slate-900 tracking-tight uppercase">Command Intelligence</h1>
@@ -201,13 +228,12 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Live Operations', val: activeTripsCount, icon: Navigation, color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Ready for Duty', val: availableCount, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Today\'s Diesel', val: `${Math.round(todayLiters)}L`, icon: Droplets, color: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'Breakdown Alerts', val: breakdownCount, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' },
+          { label: 'Live Operations', val: stats.activeTripsCount, icon: Navigation, color: 'text-blue-600', bg: 'bg-blue-50' },
+          { label: 'Ready for Duty', val: stats.availableCount, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+          { label: 'Today\'s Diesel', val: `${Math.round(stats.todayLiters)}L`, icon: Droplets, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Breakdown Alerts', val: stats.breakdownCount, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' },
         ].map((stat, i) => (
           <div key={i} className="bg-white border border-slate-200 p-8 rounded-[2.5rem] flex items-center justify-between shadow-sm hover:shadow-md transition-shadow">
             <div>
@@ -219,13 +245,12 @@ export const Dashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* 3. Map Section */}
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[700px]">
         <div className="p-8 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
           <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-4">
             <Truck size={32} className="text-blue-600" /> Live Road Tracking
           </h2>
-
+          
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-blue-600 rounded-full shadow-[0_0_10px_rgba(37,99,235,0.4)]"></div>
@@ -242,16 +267,15 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 relative">
-          <MapView
-            tankers={tankers}
-            suppliers={suppliers}
-            customers={customers}
-            trips={trips}
+        <div className="flex-1 relative overflow-hidden">
+          <MapView 
+            tankers={tankers} 
+            suppliers={suppliers} 
+            customers={customers} 
+            trips={trips} 
             onHover={setHoveredTankerId}
           />
-
-          {/* Legend / Hover Inspector Overlay */}
+          
           <div className="absolute bottom-8 left-8 z-[1000] pointer-events-none">
              {hoveredTankerId ? (
                <div className="bg-slate-900/90 backdrop-blur text-white p-6 rounded-3xl border border-slate-700 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200 min-w-[280px]">
