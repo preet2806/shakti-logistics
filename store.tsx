@@ -60,12 +60,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         supabase.from('users').select('*')
       ]);
 
-      if (sRes.data) setSuppliers(sRes.data);
-      if (cRes.data) setCustomers(cRes.data);
+      if (sRes.data) setSuppliers(sRes.data.map(s => ({ ...s, isOperational: s.is_operational !== false })));
+      if (cRes.data) setCustomers(cRes.data.map(c => ({ ...c, isOperational: c.is_operational !== false })));
       if (usrRes.data) setUsers(usrRes.data);
-      
+
       if (tRes.data) {
-        setTankers(tRes.data.map(t => ({ 
+        setTankers(tRes.data.map(t => ({
           id: t.id,
           number: t.number,
           compatibleProducts: t.compatible_products || [],
@@ -84,7 +84,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               customerId: u.customer_id,
               quantityMT: Number(u.quantity_mt),
               unloadedAt: u.unloaded_at,
-              selected_route: u.selected_route
+              selectedRoute: u.selected_route,
+              challanNumber: u.challan_number,
+              actualQuantityMT: u.actual_quantity_mt !== null ? Number(u.actual_quantity_mt) : undefined
             }));
 
           return {
@@ -134,7 +136,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const optimal = routes[0];
           const loadedDist = Number(trip.loaded_distance || 0);
           const totalDist = Number((optimal.distanceKm + loadedDist).toFixed(1));
-          
+
           await supabase.from('trips').update({
             empty_route: optimal,
             empty_distance: optimal.distanceKm,
@@ -225,7 +227,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         quantity_mt: u.quantityMT,
         unloaded_at: u.unloadedAt,
         selected_route: u.selectedRoute,
-        sort_order: idx
+        sort_order: idx,
+        challan_number: u.challanNumber,
+        actual_quantity_mt: u.actualQuantityMT
       }));
       await supabase.from('unloads').insert(unloadRecords);
     }
@@ -254,7 +258,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           quantity_mt: u.quantityMT,
           unloaded_at: u.unloadedAt,
           selected_route: u.selectedRoute,
-          sort_order: idx
+          sort_order: idx,
+          challan_number: u.challanNumber,
+          actual_quantity_mt: u.actualQuantityMT
         }));
         await supabase.from('unloads').insert(unloadRecords);
       }
@@ -280,11 +286,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         if (newLocId !== tanker.currentLocationId || newStatus !== tanker.status) {
-          await supabase.from('tankers').update({ 
-            current_location_id: newLocId, 
-            status: newStatus 
+          await supabase.from('tankers').update({
+            current_location_id: newLocId,
+            status: newStatus
           }).eq('id', tanker.id);
-          
+
           await recalculatePlannedTrips(tanker.id, newLocId, suppliers, customers);
         }
       }
@@ -330,7 +336,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (t.status === 'BREAKDOWN') {
       const activeTrip = trips.find(tr => tr.tankerId === t.id && (BLOCKING_STATUSES as any[]).includes(tr.status));
       if (activeTrip) {
-        await supabase.from('trips').update({ status: TripStatus.CANCELLED }).eq('id', activeTrip.id);
+        const autoRemark = activeTrip.remarks
+          ? `${activeTrip.remarks} | AUTO-CANCELLED: Asset reported BREAKDOWN.`
+          : 'AUTO-CANCELLED: Asset reported BREAKDOWN.';
+        await supabase.from('trips').update({
+          status: TripStatus.CANCELLED,
+          remarks: autoRemark
+        }).eq('id', activeTrip.id);
       }
     }
 
@@ -347,32 +359,44 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const addSupplier = async (s: Supplier) => {
-    await supabase.from('suppliers').insert([{ name: s.name, address: s.address, lat: s.lat, lng: s.lng }]);
+    await supabase.from('suppliers').insert([{ name: s.name, address: s.address, lat: s.lat, lng: s.lng, is_operational: true }]);
     await fetchData();
   };
 
   const updateSupplier = async (s: Supplier) => {
-    await supabase.from('suppliers').update({ name: s.name, address: s.address, lat: s.lat, lng: s.lng }).eq('id', s.id);
+    await supabase.from('suppliers').update({
+      name: s.name,
+      address: s.address,
+      lat: s.lat,
+      lng: s.lng,
+      is_operational: s.isOperational
+    }).eq('id', s.id);
     await fetchData();
   };
 
   const deleteSupplier = async (id: string) => {
-    await supabase.from('suppliers').delete().eq('id', id);
+    await supabase.from('suppliers').update({ is_operational: false }).eq('id', id);
     await fetchData();
   };
 
   const addCustomer = async (c: Customer) => {
-    await supabase.from('customers').insert([{ name: c.name, address: c.address, lat: c.lat, lng: c.lng }]);
+    await supabase.from('customers').insert([{ name: c.name, address: c.address, lat: c.lat, lng: c.lng, is_operational: true }]);
     await fetchData();
   };
 
   const updateCustomer = async (c: Customer) => {
-    await supabase.from('customers').update({ name: c.name, address: c.address, lat: c.lat, lng: c.lng }).eq('id', c.id);
+    await supabase.from('customers').update({
+      name: c.name,
+      address: c.address,
+      lat: c.lat,
+      lng: c.lng,
+      is_operational: c.isOperational
+    }).eq('id', c.id);
     await fetchData();
   };
 
   const deleteCustomer = async (id: string) => {
-    await supabase.from('customers').delete().eq('id', id);
+    await supabase.from('customers').update({ is_operational: false }).eq('id', id);
     await fetchData();
   };
 

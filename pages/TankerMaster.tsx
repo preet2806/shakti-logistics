@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Plus, Search, Edit2, Trash2, X, Save, Loader2, MapPin, Map as MapIcon, Database, AlertCircle, Info } from 'lucide-react';
 import { useGlobalStore } from '../store.tsx';
 import { Tanker, Product, Customer } from '../types.ts';
@@ -28,8 +28,12 @@ export const TankerMaster: React.FC = () => {
   const [manualLat, setManualLat] = useState<number | ''>('');
   const [manualLng, setManualLng] = useState<number | ''>('');
 
-  const allLocations = [...suppliers, ...customers];
+  const allLocations = useMemo(() => [...suppliers, ...customers], [suppliers, customers]);
   const filteredTankers = tankers.filter(t => t.number.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  // Only operational locations for new tankers
+  const operationalSuppliers = useMemo(() => suppliers.filter(s => s.isOperational || s.id === editingTanker?.currentLocationId), [suppliers, editingTanker]);
+  const operationalCustomers = useMemo(() => customers.filter(c => c.isOperational || c.id === editingTanker?.currentLocationId), [customers, editingTanker]);
 
   const handleOpenModal = (tanker?: Tanker) => {
     if (tanker) {
@@ -48,7 +52,7 @@ export const TankerMaster: React.FC = () => {
       setDieselAvg(3.5);
       setSelectedProducts([]);
       setStatus('AVAILABLE');
-      setCurrentLocId(suppliers[0]?.id || customers[0]?.id || '');
+      setCurrentLocId(operationalSuppliers[0]?.id || operationalCustomers[0]?.id || '');
       setLocationMode('CONFIGURED');
       setManualLocName('');
       setManualLat('');
@@ -80,7 +84,8 @@ export const TankerMaster: React.FC = () => {
           name: manualLocName || `Ad-hoc Site: ${number}`,
           address: 'Manual Entry Location',
           lat: Number(manualLat) || 0,
-          lng: Number(manualLng) || 0
+          lng: Number(manualLng) || 0,
+          isOperational: true
         };
         await addCustomer(newCustomer);
         finalLocationId = newLocId;
@@ -92,7 +97,7 @@ export const TankerMaster: React.FC = () => {
         capacityMT: capacity,
         dieselAvgKmPerL: dieselAvg,
         compatibleProducts: selectedProducts,
-        currentLocationId: finalLocationId || (suppliers[0]?.id || customers[0]?.id || ''),
+        currentLocationId: finalLocationId || (operationalSuppliers[0]?.id || operationalCustomers[0]?.id || ''),
         status: status
       };
 
@@ -273,12 +278,6 @@ export const TankerMaster: React.FC = () => {
                     Breakdown
                   </button>
                 </div>
-                {status === 'BREAKDOWN' && editingTanker && (
-                   <p className="text-[9px] font-bold text-rose-500 uppercase italic mt-1 px-1">Warning: Marking this tanker in breakdown will automatically cancel any current active trip.</p>
-                )}
-                {status === 'ON_TRIP' && (
-                   <p className="text-[9px] font-bold text-blue-500 uppercase italic mt-1 px-1 flex items-center gap-1"><Info size={10} /> Tanker is currently managing an active manifest.</p>
-                )}
               </div>
 
               <div className="space-y-4 pt-4 border-t border-slate-100">
@@ -290,15 +289,6 @@ export const TankerMaster: React.FC = () => {
                     </span>
                   )}
                 </div>
-
-                {isLocationDisabled && (
-                  <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl flex items-start gap-3">
-                    <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />
-                    <p className="text-[10px] font-bold text-blue-700 leading-relaxed uppercase tracking-tight">
-                      This vehicle is currently dispatched. Its position is tied to the active delivery manifest. To relocate this tanker manually, the trip must be finalized or cancelled.
-                    </p>
-                  </div>
-                )}
 
                 <div className={`grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl border border-slate-200 ${isLocationDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
                   <button
@@ -329,10 +319,10 @@ export const TankerMaster: React.FC = () => {
                         disabled={isLocationDisabled}
                       >
                         <optgroup label="Suppliers">
-                          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} (Supplier)</option>)}
+                          {operationalSuppliers.map(s => <option key={s.id} value={s.id}>{s.name} (Supplier)</option>)}
                         </optgroup>
                         <optgroup label="Customers">
-                          {customers.map(c => <option key={c.id} value={c.id}>{c.name} (Customer)</option>)}
+                          {operationalCustomers.map(c => <option key={c.id} value={c.id}>{c.name} (Customer)</option>)}
                         </optgroup>
                       </select>
                       <div className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">

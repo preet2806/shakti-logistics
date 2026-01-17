@@ -11,16 +11,13 @@ import { formatMT, formatKm, formatLiters } from '../utils/helpers.ts';
 export const Reports: React.FC = () => {
   const { trips, tankers, suppliers, customers } = useGlobalStore();
 
-  // Set default date range to last 7 days
   const [dateRange, setDateRange] = useState({
     from: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
   });
 
-  // Trip Status filter - Default set to CLOSED as requested
   const [statusFilter, setStatusFilter] = useState<TripStatus>(TripStatus.CLOSED);
 
-  // Derived state to filter trips by selected date range
   const filteredTripsByDate = useMemo(() => {
     return trips.filter(t => {
       const tripDate = t.plannedStartDate;
@@ -65,11 +62,6 @@ export const Reports: React.FC = () => {
     }, 100);
   };
 
-  /**
-   * Generates the Trip Report with expanded unload rows.
-   * Distance and Diesel columns are skipped.
-   * Actual Quantity and Challan Number are left blank.
-   */
   const handleTripReport = (filteredByStatus?: TripStatus) => {
     const reportData: any[] = [];
 
@@ -88,11 +80,11 @@ export const Reports: React.FC = () => {
           'Product': t.productId,
           'Loading Point': loadingPoint?.name || 'Unknown',
           'Unloading Point': 'N/A',
-          'Unloading Quantity (MT)': 0,
+          'Planned Quantity (MT)': 0,
           'Actual Quantity (MT)': '',
+          'Difference (MT)': '',
           'Challan Number': '',
         };
-        // Skip trip status column if filtered report
         if (!filteredByStatus) row['Trip Status'] = t.status.replace(/_/g, ' ');
         row['Remarks'] = t.remarks || '';
         reportData.push(row);
@@ -103,18 +95,22 @@ export const Reports: React.FC = () => {
         const cust = customers.find(c => c.id === u.customerId);
         const isFirst = index === 0;
 
+        const planned = Number(u.quantityMT || 0);
+        const actual = u.actualQuantityMT !== undefined ? Number(u.actualQuantityMT) : null;
+        const diff = actual !== null ? (planned - actual).toFixed(2) : '';
+
         const row: any = {
           'Date': isFirst ? t.plannedStartDate : '',
           'Tanker No': isFirst ? (tanker?.number || 'Deleted') : '',
           'Product': isFirst ? t.productId : '',
           'Loading Point': isFirst ? (loadingPoint?.name || 'Unknown') : '',
           'Unloading Point': cust?.name || 'Unknown',
-          'Unloading Quantity (MT)': u.quantityMT,
-          'Actual Quantity (MT)': '',
-          'Challan Number': '',
+          'Planned Quantity (MT)': planned,
+          'Actual Quantity (MT)': actual !== null ? actual : '',
+          'Difference (MT)': diff,
+          'Challan Number': u.challanNumber || '',
         };
 
-        // Skip trip status column if filtered report
         if (!filteredByStatus) {
           row['Trip Status'] = isFirst ? t.status.replace(/_/g, ' ') : '';
         }
@@ -126,7 +122,7 @@ export const Reports: React.FC = () => {
 
     const filename = filteredByStatus
       ? `Filtered_Trip_Report_${filteredByStatus}`
-      : 'Full_Trip_Report_Expanded';
+      : 'Expanded_Trip_Intelligence_Report';
 
     exportCSV(reportData, filename);
   };
@@ -174,8 +170,8 @@ export const Reports: React.FC = () => {
   const reportCards = [
     {
       id: 'trip-report',
-      title: 'Full Date-wise Trip Report',
-      desc: 'All statuses included. Loading/Unloading sites, quantities, and Challan placeholders.',
+      title: 'Strategic Trip Report',
+      desc: 'Includes Challan No, Actuals, and Variance analysis. Row-expanded.',
       icon: Truck,
       color: 'text-blue-600',
       bg: 'bg-blue-50',
@@ -184,8 +180,8 @@ export const Reports: React.FC = () => {
     },
     {
       id: 'filtered-trip-report',
-      title: `Trip Report by Status`,
-      desc: `Specific report for ${statusFilter.replace(/_/g, ' ')} trips. Loading/Unloading sites, quantities, and Challan placeholders.`,
+      title: `Status-Specific Report`,
+      desc: `Deep dive into ${statusFilter.replace(/_/g, ' ')} operational records.`,
       icon: ListFilter,
       color: 'text-indigo-600',
       bg: 'bg-indigo-50',
@@ -194,8 +190,8 @@ export const Reports: React.FC = () => {
     },
     {
       id: 'tanker-status',
-      title: 'Daily Tanker Status',
-      desc: 'Live snapshot of all tankers and their current site locations.',
+      title: 'Asset Matrix',
+      desc: 'Live snapshot of all tankers and their current deployment positions.',
       icon: BarChart3,
       color: 'text-emerald-600',
       bg: 'bg-emerald-50',
@@ -204,7 +200,7 @@ export const Reports: React.FC = () => {
     },
     {
       id: 'diesel-log',
-      title: 'Diesel & Distance Log',
+      title: 'Fuel Intelligence',
       desc: 'Fleet fuel utilization tracking with placeholders for manual entry.',
       icon: Fuel,
       color: 'text-amber-600',
@@ -224,7 +220,7 @@ export const Reports: React.FC = () => {
         <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 shadow-sm">
           <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
           <p className="text-[11px] font-black text-emerald-700 uppercase tracking-widest leading-tight">
-            Advanced Row-Expansion Engine Active
+            Variance Analysis Engine Active (Planned vs Actual)
           </p>
         </div>
       </div>
@@ -296,24 +292,6 @@ export const Reports: React.FC = () => {
             </div>
           </div>
         ))}
-      </div>
-
-      <div className="bg-slate-900 text-white p-10 rounded-[3rem] relative overflow-hidden shadow-2xl">
-               <div className="absolute top-0 right-0 p-10 opacity-10">
-                  <FileText size={200} />
-               </div>
-                        <div className="relative z-10 max-w-xl">
-                           <div className="w-12 h-1 bg-blue-500 mb-6 rounded-full"></div>
-                           <h2 className="text-3xl font-black mb-4 tracking-tight leading-none">Dispatcher Reports</h2>
-                           <p className="text-slate-400 text-lg mb-8 font-medium">All reports are calculated in real-time. Use the date range filters above to generate historical trip records.</p>
-                           <div className="flex flex-wrap gap-4">
-                             <div className="px-6 py-2 bg-slate-800 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400">
-                               Excel Compatible
-                             </div>
-                           <div className="px-6 py-2 bg-slate-800 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400">
-                               UTF-8 Encoded
-                           </div>
-                        </div>
       </div>
     </div>
   );

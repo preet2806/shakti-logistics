@@ -6,7 +6,7 @@ import {
   Plus, Trash2, MapPin, ArrowLeft, Navigation, 
   Route as RouteIcon, Clock, Map as MapIcon, 
   ChevronRight, CheckCircle2, Info, Loader2, Droplets,
-  Zap, Ruler, MousePointer2, Lock, AlertTriangle
+  Zap, Ruler, MousePointer2, Lock, AlertTriangle, Save
 } from 'lucide-react';
 import { useGlobalStore } from '../store.tsx';
 import { Product, Trip, TripStatus, UnloadStop, RouteData, Location } from '../types.ts';
@@ -15,7 +15,7 @@ import { fetchRoutes } from '../utils/helpers.ts';
 /**
  * ROBUST LOGISTICS MAP PREVIEW
  */
-const InteractiveRouteMap: React.FC<{ 
+const InteractiveRouteMap: React.FC<{
   segments: { id: string, route: RouteData | null, color: string, start: Location, end: Location }[];
   activeSegmentId: string | null;
 }> = ({ segments, activeSegmentId }) => {
@@ -69,11 +69,11 @@ const InteractiveRouteMap: React.FC<{
       L.circleMarker(endPos, { radius: 7, color: seg.color, fillOpacity: 1, weight: 3 }).addTo(group);
 
       if (seg.route?.geometry && seg.route.geometry.length > 0) {
-        L.polyline(seg.route.geometry, { 
-          color: seg.color, 
-          weight, 
+        L.polyline(seg.route.geometry, {
+          color: seg.color,
+          weight,
           opacity,
-          dashArray: seg.id === 'leg-empty' ? '5, 10' : undefined 
+          dashArray: seg.id === 'leg-empty' ? '5, 10' : undefined
         }).addTo(group);
       }
     });
@@ -97,29 +97,41 @@ export const TripForm: React.FC = () => {
   const [plannedStartDate, setPlannedStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [unloads, setUnloads] = useState<UnloadStop[]>([]);
   const [remarks, setRemarks] = useState('');
-  
+
   const [leg1Options, setLeg1Options] = useState<RouteData[]>([]);
   const [selectedLeg1, setSelectedLeg1] = useState<RouteData | null>(null);
   const [stopOptions, setStopOptions] = useState<Record<number, RouteData[]>>({});
-  
+
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const existingTrip = useMemo(() => trips.find(t => t.id === id), [id, trips]);
-  
+
   const isFinalStatus = existingTrip?.status === TripStatus.CLOSED || existingTrip?.status === TripStatus.CANCELLED;
-  
+
   const isExecuting = existingTrip && (
-    existingTrip.status === TripStatus.LOADED_AT_SUPPLIER || 
-    existingTrip.status === TripStatus.IN_TRANSIT || 
+    existingTrip.status === TripStatus.LOADED_AT_SUPPLIER ||
+    existingTrip.status === TripStatus.IN_TRANSIT ||
     existingTrip.status === TripStatus.PARTIALLY_UNLOADED
   );
 
-  const selectedTanker = tankers.find(t => t.id === tankerId);
-  const selectedSupplier = suppliers.find(s => s.id === supplierId);
-  const tankerOrigin = selectedTanker 
-    ? [...suppliers, ...customers].find(l => l.id === selectedTanker.currentLocationId)
-    : null;
+  const selectedTanker = useMemo(() => tankers.find(t => t.id === tankerId), [tankers, tankerId]);
+  const selectedSupplier = useMemo(() => suppliers.find(s => s.id === supplierId), [suppliers, supplierId]);
+
+  const tankerOrigin = useMemo(() => {
+    if (!selectedTanker) return null;
+    return [...suppliers, ...customers].find(l => l.id === selectedTanker.currentLocationId);
+  }, [selectedTanker, suppliers, customers]);
+
+  const operationalSuppliers = useMemo(() =>
+    suppliers.filter(s => s.isOperational || s.id === existingTrip?.supplierId),
+    [suppliers, existingTrip]
+  );
+
+  const operationalCustomers = useMemo(() =>
+    customers.filter(c => c.isOperational || existingTrip?.unloads.some(u => u.customerId === c.id)),
+    [customers, existingTrip]
+  );
 
   useEffect(() => {
     if (id) {
@@ -149,12 +161,12 @@ export const TripForm: React.FC = () => {
       }
     }
     getLeg1();
-  }, [tankerId, supplierId, isExecuting, isFinalStatus]);
+  }, [tankerOrigin, selectedSupplier, isExecuting, isFinalStatus, selectedLeg1]);
 
   useEffect(() => {
     async function getLeg2() {
       if (!selectedSupplier || unloads.length === 0 || isFinalStatus) return;
-      
+
       setIsLoading(true);
       const newStopOptions = { ...stopOptions };
       const updatedUnloads = [...unloads];
@@ -164,12 +176,12 @@ export const TripForm: React.FC = () => {
       for (let i = 0; i < unloads.length; i++) {
         const custId = unloads[i].customerId;
         const cust = customers.find(c => c.id === custId);
-        
+
         if (cust) {
           if (!newStopOptions[i]) {
             const routes = await fetchRoutes(prevLoc.lat, prevLoc.lng, cust.lat, cust.lng);
             newStopOptions[i] = routes;
-            
+
             if (!unloads[i].selectedRoute && routes.length > 0) {
               updatedUnloads[i] = { ...updatedUnloads[i], selectedRoute: routes[0] };
               stateChanged = true;
@@ -184,7 +196,7 @@ export const TripForm: React.FC = () => {
       setIsLoading(false);
     }
     getLeg2();
-  }, [unloads.map(u => u.customerId).join(','), supplierId, isFinalStatus]);
+  }, [unloads, selectedSupplier, isFinalStatus, customers, stopOptions]);
 
   const mapSegments = useMemo(() => {
     const res = [];
@@ -199,7 +211,7 @@ export const TripForm: React.FC = () => {
       }
     });
     return res;
-  }, [tankerOrigin, selectedSupplier, selectedLeg1, unloads]);
+  }, [tankerOrigin, selectedSupplier, selectedLeg1, unloads, customers]);
 
   const totalDist = useMemo(() => {
     const l1 = selectedLeg1?.distanceKm || 0;
@@ -224,21 +236,16 @@ export const TripForm: React.FC = () => {
       return;
     }
     const next = unloads.filter((_, idx) => idx !== i);
-    
-    // Clear stop options for indices after the removed stop
     const nextOptions = { ...stopOptions };
     for (let j = i; j <= unloads.length; j++) delete nextOptions[j];
     setStopOptions(nextOptions);
-    
     setUnloads(next);
   };
 
   const updateUnload = (i: number, field: keyof UnloadStop, val: any) => {
     if (unloads[i].unloadedAt || isFinalStatus) return;
-
     const next = [...unloads];
     next[i] = { ...next[i], [field]: val };
-    
     if (field === 'customerId') {
       const nextOptions = { ...stopOptions };
       for (let j = i; j < unloads.length; j++) delete nextOptions[j];
@@ -247,52 +254,60 @@ export const TripForm: React.FC = () => {
     setUnloads(next);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isFinalStatus) return;
-    if (!tankerId || !supplierId) return;
+    if (!tankerId || !supplierId) { alert("Missing configuration."); return; }
 
-    const payload: Trip = {
-      id: id || crypto.randomUUID(),
-      tankerId,
-      productId,
-      supplierId,
-      plannedStartDate,
-      status: id ? (trips.find(t => t.id === id)?.status || TripStatus.PLANNED) : TripStatus.PLANNED,
-      emptyRoute: selectedLeg1 || undefined,
-      unloads,
-      totalLoadedMT: unloads.reduce((acc, u) => acc + Number(u.quantityMT || 0), 0),
-      dieselIssuedL: (existingTrip?.dieselIssuedL && existingTrip.dieselIssuedL > 0) ? existingTrip.dieselIssuedL : estimatedDiesel,
-      dieselUsedL: existingTrip?.dieselUsedL || 0,
-      emptyDistanceKm: selectedLeg1?.distanceKm || 0,
-      loadedDistanceKm: unloads.reduce((acc, u) => acc + (u.selectedRoute?.distanceKm || 0), 0),
-      totalDistanceKm: totalDist,
-      remarks,
-      createdBy: currentUser.id
-    };
+    setIsLoading(true);
+    try {
+      const payload: Trip = {
+        id: id || crypto.randomUUID(),
+        tankerId,
+        productId,
+        supplierId,
+        plannedStartDate,
+        status: id ? (trips.find(t => t.id === id)?.status || TripStatus.PLANNED) : TripStatus.PLANNED,
+        emptyRoute: selectedLeg1 || undefined,
+        unloads,
+        totalLoadedMT: unloads.reduce((acc, u) => acc + Number(u.quantityMT || 0), 0),
+        dieselIssuedL: (existingTrip?.dieselIssuedL && existingTrip.dieselIssuedL > 0) ? existingTrip.dieselIssuedL : estimatedDiesel,
+        dieselUsedL: existingTrip?.dieselUsedL || 0,
+        emptyDistanceKm: selectedLeg1?.distanceKm || 0,
+        loadedDistanceKm: unloads.reduce((acc, u) => acc + (u.selectedRoute?.distanceKm || 0), 0),
+        totalDistanceKm: totalDist,
+        remarks,
+        createdBy: currentUser?.id || 'System'
+      };
 
-    if (id) updateTrip(payload);
-    else addTrip(payload);
+      if (id) await updateTrip(payload);
+      else await addTrip(payload);
 
-    navigate('/trips');
+      navigate(-1);
+    } catch (err) {
+      console.error(err);
+      alert("Deployment failure. Check manifest parameters.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
-    <div className={`max-w-[1750px] mx-auto px-4 pb-20 space-y-8 animate-in fade-in duration-500 ${isFinalStatus ? 'select-none pointer-events-none grayscale-[0.3]' : ''}`}>
+    <div className={`max-w-[1750px] mx-auto px-4 pb-20 space-y-8 animate-in fade-in duration-500 ${isFinalStatus ? 'grayscale-[0.3]' : ''}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <button onClick={() => navigate(-1)} className="p-4 hover:bg-white rounded-2xl shadow-sm border border-slate-200 transition-all pointer-events-auto">
-            <ArrowLeft size={20} />
+          <button onClick={() => navigate(-1)} className="p-4 bg-white hover:bg-slate-50 rounded-2xl shadow-sm border border-slate-200 transition-all pointer-events-auto">
+            <ArrowLeft size={20} className="text-slate-600" />
           </button>
           <div>
             <h1 className="text-4xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-4">
               {id ? (isFinalStatus ? 'Historical Record' : 'Refine Deployment') : 'Strategic Planning'}
               {isFinalStatus && <Lock className="text-slate-400" size={32} />}
             </h1>
-            <p className="text-slate-500 font-medium">
+            <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest mt-1">
               {isFinalStatus
-                ? 'This trip is finalized or cancelled. Edits are no longer permitted.'
-                : isExecuting ? 'Appending new destinations to an active deployment.' : 'Configure multi-segment road paths and destination sequences.'}
+                ? 'Deployment sequence completed. Locked for audit.'
+                : isExecuting ? 'Appending new destinations to active road path.' : 'Configure global multi-segment distribution manifest.'}
             </p>
           </div>
         </div>
@@ -312,7 +327,7 @@ export const TripForm: React.FC = () => {
             </div>
           )}
 
-          <section className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm space-y-10">
+          <section className={`bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm space-y-10 transition-opacity ${isExecuting ? 'opacity-80' : 'opacity-100'}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-3 h-10 bg-blue-600 rounded-full"></div>
@@ -347,14 +362,8 @@ export const TripForm: React.FC = () => {
                       </option>
                     ))}
                   </select>
-                  {!isFinalStatus && <ChevronRight size={18} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" />}
+                  {!isFinalStatus && !isExecuting && <ChevronRight size={18} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" />}
                 </div>
-                {tankerOrigin && (
-                  <div className={`flex items-center gap-3 text-[10px] font-black bg-blue-50/50 px-5 py-3 rounded-2xl border border-blue-100 uppercase tracking-widest ${selectedTanker?.status === 'BREAKDOWN' ? 'text-rose-600 bg-rose-50 border-rose-100' : 'text-blue-600'}`}>
-                    <Navigation size={14} className="animate-pulse" />
-                    <span>Current Position: <span className="text-slate-900">{tankerOrigin.name}</span></span>
-                  </div>
-                )}
               </div>
               <div className="space-y-4">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Planned Start</label>
@@ -365,9 +374,9 @@ export const TripForm: React.FC = () => {
                 <div className="relative">
                   <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-5 font-bold outline-none appearance-none disabled:opacity-50 transition-all focus:bg-white focus:ring-4 focus:ring-blue-600/5" required disabled={isExecuting || isFinalStatus}>
                     <option value="">Choose Source...</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {operationalSuppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isOperational && '(INOPERATIONAL)'}</option>)}
                   </select>
-                  {!isFinalStatus && <ChevronRight size={18} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" />}
+                  {!isFinalStatus && !isExecuting && <ChevronRight size={18} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" />}
                 </div>
               </div>
               <div className="space-y-4">
@@ -376,13 +385,13 @@ export const TripForm: React.FC = () => {
                   <select value={productId} onChange={(e) => setProductId(e.target.value as Product)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-5 font-bold outline-none appearance-none disabled:opacity-50 transition-all focus:bg-white focus:ring-4 focus:ring-blue-600/5" disabled={isExecuting || isFinalStatus}>
                     {Object.values(Product).map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
-                  {!isFinalStatus && <ChevronRight size={18} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" />}
+                  {!isFinalStatus && !isExecuting && <ChevronRight size={18} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" />}
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Leg 1 Route Cards */}
+          {/* Leg 1 Route Selection */}
           {(!isExecuting && !isFinalStatus) ? (
             leg1Options.length > 0 && (
               <section
@@ -396,7 +405,6 @@ export const TripForm: React.FC = () => {
                     <p className="text-2xl font-black text-slate-900 tracking-tight">Select Entry Path</p>
                   </div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {leg1Options.map((route, i) => {
                     const isSelected = selectedLeg1?.summary === route.summary;
@@ -417,7 +425,7 @@ export const TripForm: React.FC = () => {
                             <span className="text-sm font-black text-slate-400 uppercase tracking-widest">KM</span>
                           </div>
                         </div>
-                        <p className="font-bold truncate text-base text-slate-900">{route.summary}</p>
+                        <p className="font-bold truncate text-base text-slate-900 uppercase tracking-tight">{route.summary}</p>
                       </button>
                     );
                   })}
@@ -428,24 +436,25 @@ export const TripForm: React.FC = () => {
             selectedLeg1 && (
               <section className="bg-slate-50/50 p-8 rounded-[2.5rem] border border-slate-100 flex items-center justify-between">
                 <div>
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Entry Route</p>
-                   <p className="text-lg font-black text-slate-800">{selectedLeg1.summary}</p>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Entry Corridor</p>
+                   <p className="text-lg font-black text-slate-800 uppercase tracking-tight">{selectedLeg1.summary}</p>
                 </div>
                 <div className="text-right">
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Entry Distance</p>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Distance</p>
                    <p className="text-xl font-black text-blue-600">{selectedLeg1.distanceKm} KM</p>
                 </div>
               </section>
             )
           )}
 
+          {/* Leg 02: Distribution sequence */}
           <section className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm space-y-10">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-3 h-10 bg-emerald-500 rounded-full"></div>
                 <div>
                   <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] leading-tight">Leg 02</h2>
-                  <p className="text-xl font-bold text-slate-900">Delivery Distribution</p>
+                  <p className="text-xl font-bold text-slate-900">Distribution Sequence</p>
                 </div>
               </div>
               {!isFinalStatus && (
@@ -465,7 +474,7 @@ export const TripForm: React.FC = () => {
                 >
                   <div className="flex gap-8 items-end">
                     <div className="flex-1 space-y-4">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Unload Destination {idx + 1}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Destination {idx + 1}</label>
                       <select
                         value={stop.customerId}
                         onChange={(e) => updateUnload(idx, 'customerId', e.target.value)}
@@ -474,11 +483,11 @@ export const TripForm: React.FC = () => {
                         disabled={!!stop.unloadedAt || isFinalStatus}
                       >
                         <option value="">Select customer site...</option>
-                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        {operationalCustomers.map(c => <option key={c.id} value={c.id}>{c.name} {!c.isOperational && '(ARCHIVED)'}</option>)}
                       </select>
                     </div>
                     <div className="w-40 space-y-4">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Qty (MT)</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Planned (MT)</label>
                       <input
                         type="number"
                         step="0.1"
@@ -498,10 +507,9 @@ export const TripForm: React.FC = () => {
 
                   {stop.customerId && !stop.unloadedAt && !isFinalStatus && stopOptions[idx] && stopOptions[idx].length > 0 && (
                     <div className="space-y-6 pt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                      <div className="flex items-center gap-3">
-                        <RouteIcon size={16} className="text-blue-500" />
-                        <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Select Route for Segment {idx + 1}</h4>
-                      </div>
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-3">
+                        <RouteIcon size={16} className="text-blue-500" /> Choose Distribution Path
+                      </h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {stopOptions[idx].map((route, rIdx) => {
                           const isSelected = stop.selectedRoute?.summary === route.summary;
@@ -513,7 +521,7 @@ export const TripForm: React.FC = () => {
                               className={`flex flex-col p-6 rounded-3xl border-2 transition-all duration-300 text-left outline-none ${isSelected ? 'border-blue-600 bg-white shadow-lg' : 'border-slate-100 bg-slate-50/50 hover:bg-white'}`}
                             >
                               <div className="flex items-center justify-between mb-4">
-                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Path {rIdx + 1}</span>
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sequence {rIdx + 1}</span>
                                 {isSelected && <CheckCircle2 size={16} className="text-blue-600" />}
                               </div>
                               <div className="flex items-baseline gap-2 mb-2">
@@ -527,54 +535,57 @@ export const TripForm: React.FC = () => {
                       </div>
                     </div>
                   )}
-
-                  {(stop.unloadedAt || isFinalStatus) && stop.selectedRoute && (
-                    <div className="p-6 bg-slate-50/50 rounded-3xl border border-slate-100 flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 bg-white rounded-xl shadow-sm">
-                          <CheckCircle2 size={18} className="text-emerald-500" />
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Selected Road Path</p>
-                          <p className="text-sm font-bold text-slate-700 uppercase">{stop.selectedRoute.summary}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Distance</p>
-                        <p className="text-lg font-black text-blue-600">{stop.selectedRoute.distanceKm} KM</p>
-                      </div>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
           </section>
 
+          {/* Action Footer */}
           <div className="flex justify-end gap-6 pt-10">
-            <button type="button" onClick={() => navigate('/trips')} className="px-12 py-6 bg-white text-slate-600 font-black rounded-3xl border-2 border-slate-100 shadow-sm hover:bg-slate-50 uppercase text-xs tracking-widest transition-all pointer-events-auto">
-              {isFinalStatus ? 'Return to Fleet' : 'Abort Planning'}
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="px-12 py-6 bg-white text-slate-600 font-black rounded-3xl border-2 border-slate-100 shadow-sm hover:bg-slate-50 uppercase text-xs tracking-widest transition-all pointer-events-auto"
+            >
+              {isFinalStatus ? 'Return to Manifests' : 'Abort Planning'}
             </button>
             {!isFinalStatus && (
-              <button type="submit" disabled={isLoading} className="px-16 py-6 bg-slate-900 text-white font-black rounded-3xl shadow-2xl hover:bg-black transition-all uppercase text-xs tracking-widest flex items-center gap-5 group pointer-events-auto disabled:opacity-50">
-                {isLoading ? <Loader2 size={20} className="animate-spin" /> : (isExecuting ? 'Update Live Manifest' : 'Confirm Deployment')}
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="px-16 py-6 bg-slate-900 text-white font-black rounded-3xl shadow-2xl hover:bg-black transition-all uppercase text-xs tracking-widest flex items-center gap-5 group pointer-events-auto disabled:opacity-50"
+              >
+                {isLoading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
+                {isExecuting ? 'Update Live Manifest' : 'Authorize Deployment'}
                 <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
               </button>
             )}
           </div>
         </form>
 
+        {/* Analytics Side Panel */}
         <div className="lg:col-span-5 space-y-8 sticky top-10">
-          <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl p-12 flex flex-col min-h-[820px]">
+          <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-sm p-12 flex flex-col min-h-[820px]">
             <div className="flex items-center justify-between mb-10">
               <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-4">
                 <div className="p-2 bg-blue-600 text-white rounded-lg shadow-lg">
                   <MapIcon size={18} />
                 </div>
-                Network Analysis
+                Asset Telemetry Preview
               </h2>
             </div>
             <div className="flex-1 min-h-[520px] relative pointer-events-auto">
               <InteractiveRouteMap segments={mapSegments} activeSegmentId={activeSegmentId} />
+            </div>
+            <div className="mt-10 p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 grid grid-cols-2 gap-8">
+               <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Payload</p>
+                  <p className="text-2xl font-black text-slate-900">{unloads.reduce((acc, u) => acc + Number(u.quantityMT || 0), 0).toFixed(1)} MT</p>
+               </div>
+               <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Route Distance</p>
+                  <p className="text-2xl font-black text-blue-600">{totalDist} KM</p>
+               </div>
             </div>
           </div>
         </div>

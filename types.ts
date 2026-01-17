@@ -22,6 +22,7 @@ export type Location = {
   address: string;
   lat: number;
   lng: number;
+  isOperational?: boolean;
 };
 
 export type Supplier = Location;
@@ -67,6 +68,8 @@ export type UnloadStop = {
   quantityMT: number;
   unloadedAt?: string;
   selectedRoute?: RouteData;
+  challanNumber?: string;
+  actualQuantityMT?: number;
 };
 
 export type Trip = {
