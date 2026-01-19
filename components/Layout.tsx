@@ -11,7 +11,9 @@ import {
   Menu,
   X,
   User as UserIcon,
-  LogOut
+  LogOut,
+  BookOpen,
+  UserCog
 } from 'lucide-react';
 import { User } from '../types';
 import { useGlobalStore } from '../store.tsx';
@@ -32,6 +34,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user }) => {
     { label: 'Tankers', path: '/masters/tankers', icon: Settings },
     { label: 'Locations', path: '/masters/locations', icon: MapPin },
     { label: 'Reports', path: '/reports', icon: FileText },
+    { label: 'Profile', path: '/profile', icon: UserCog }
   ];
 
   if (user.role === 'ADMIN') {
@@ -47,7 +50,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user }) => {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar */}
-      <aside 
+      <aside
         className={`${isSidebarOpen ? 'w-72' : 'w-24'} bg-slate-900 text-slate-300 transition-all duration-300 ease-in-out flex flex-col shrink-0 relative z-20`}
       >
         <div className="h-20 flex items-center justify-between px-6 bg-slate-950/50 border-b border-slate-800">
@@ -65,8 +68,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, user }) => {
               key={item.path}
               to={item.path}
               className={`flex items-center gap-4 px-4 py-4 rounded-2xl transition-all ${
-                isActive(item.path) 
-                  ? 'bg-blue-600 text-white shadow-xl shadow-blue-900/40' 
+                isActive(item.path)
+                  ? 'bg-blue-600 text-white shadow-xl shadow-blue-900/40'
                   : 'hover:bg-slate-800 hover:text-white'
               }`}
             >
@@ -77,7 +80,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user }) => {
         </nav>
 
         <div className="p-4 border-t border-slate-800 space-y-4">
-          <div className={`flex items-center gap-4 p-4 bg-slate-800/50 rounded-2xl ${!isSidebarOpen && 'justify-center'}`}>
+          <Link to="/profile" className={`flex items-center gap-4 p-4 bg-slate-800/50 rounded-2xl hover:bg-slate-800 transition-all ${!isSidebarOpen && 'justify-center'}`}>
             <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-300 shrink-0 border border-slate-700">
               <UserIcon size={20} />
             </div>
@@ -87,7 +90,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user }) => {
                 <p className="text-[9px] text-slate-500 uppercase tracking-[0.2em]">{user.role}</p>
               </div>
             )}
-          </div>
+          </Link>
           
           <button 
             onClick={logout}

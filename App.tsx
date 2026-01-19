@@ -11,6 +11,7 @@ import { TankerMaster } from './pages/TankerMaster';
 import { LocationMaster } from './pages/LocationMaster';
 import { UserMaster } from './pages/UserMaster';
 import { Login } from './pages/Login';
+import { Profile } from './pages/Profile';
 
 const App: React.FC = () => {
   const { currentUser, isAuthenticated, loading } = useGlobalStore();
@@ -44,7 +45,8 @@ const App: React.FC = () => {
           <Route path="/masters/tankers" element={<TankerMaster />} />
           <Route path="/masters/locations" element={<LocationMaster />} />
           <Route path="/reports" element={<Reports />} />
-          
+          <Route path="/profile" element={<Profile />} />
+
           {/* Admin Protected Route */}
           {currentUser.role === 'ADMIN' ? (
             <Route path="/users" element={<UserMaster />} />

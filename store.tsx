@@ -83,7 +83,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               customerId: u.customer_id,
               quantityMT: Number(u.quantity_mt),
               unloadedAt: u.unloaded_at,
-              selectedRoute: u.selected_route,
+              selectedRoute: u.selected_route, 
               challanNumber: u.challan_number,
               actualQuantityMT: u.actual_quantity_mt !== null ? Number(u.actual_quantity_mt) : undefined
             }));
@@ -135,7 +135,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const optimal = routes[0];
           const loadedDist = Number(trip.loaded_distance || 0);
           const totalDist = Number((optimal.distanceKm + loadedDist).toFixed(1));
-
+          
           await supabase.from('trips').update({
             empty_route: optimal,
             empty_distance: optimal.distanceKm,
@@ -407,6 +407,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateUser = async (u: User) => {
     await supabase.from('users').update({ name: u.name, role: u.role, password: u.password }).eq('id', u.id);
+    if (currentUser && u.id === currentUser.id) {
+      const updatedUser = { ...currentUser, name: u.name, role: u.role, password: u.password };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('cryo_user', JSON.stringify(updatedUser));
+    }
     await fetchData();
   };
 
