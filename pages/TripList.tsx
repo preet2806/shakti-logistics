@@ -1,9 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
+import {
   Plus, Search, Calendar, Truck, CheckCircle2,
-  MapPin, AlertCircle, X, ChevronRight, Navigation, Edit2, Lock, AlertTriangle, Route as RouteIcon, Info, Droplets, Save, FileText, Hash, Ruler
+  MapPin, AlertCircle, X, ChevronRight, Navigation, Edit2, Lock, AlertTriangle, Route as RouteIcon, Info, Droplets, Save, FileText, Hash, Ruler, Receipt, MessageSquare
 } from 'lucide-react';
 import { useGlobalStore } from '../store.tsx';
 import { TripStatus, BLOCKING_STATUSES, Trip, UnloadStop } from '../types.ts';
@@ -75,7 +75,7 @@ const ActionModal: React.FC<ActionModalProps> = ({ type, title, onConfirm, onClo
 
 export const TripList: React.FC = () => {
   const navigate = useNavigate();
-  const { trips, tankers, suppliers, customers, updateTrip, getActiveTripForTanker } = useGlobalStore();
+  const { trips, tankers, suppliers, customers, updateTrip, getActiveTripForTanker, getTripExpenses } = useGlobalStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
@@ -182,6 +182,16 @@ export const TripList: React.FC = () => {
     setActionData(null);
   };
 
+  const triggerRemarkUpdate = (trip: Trip) => {
+    setActionData({
+      tripId: trip.id,
+      newStatus: trip.status, // Not changing status
+      type: 'REMARK',
+      title: 'Update Operational Remark',
+      initialValue: trip.remarks
+    });
+  };
+
   return (
     <div className="space-y-6 px-2">
       {/* Capture Modal Rendering */}
@@ -245,6 +255,9 @@ export const TripList: React.FC = () => {
           const completedStops = trip.unloads.filter(u => u.unloadedAt);
           const totalStops = trip.unloads.length;
 
+          // Estimate expenses for card
+          const estimatedExp = getTripExpenses(trip);
+
           return (
             <div key={trip.id} className={`bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col transition-all hover:shadow-xl ${isBlocking ? 'ring-2 ring-blue-500/10' : ''} ${isFinal ? 'grayscale-[0.4] opacity-80' : ''} ${isBreakdown ? 'ring-4 ring-rose-500/10' : ''}`}>
 
@@ -261,7 +274,16 @@ export const TripList: React.FC = () => {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                   {/* Remark Action */}
+                   <button
+                     onClick={() => triggerRemarkUpdate(trip)}
+                     className={`p-2.5 rounded-xl transition-all ${trip.remarks ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-slate-100 text-slate-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                     title="Edit Operational Remark"
+                   >
+                     <MessageSquare size={16} />
+                   </button>
+
                    {!isFinal && (
                      <button
                        onClick={() => navigate(`/trips/${trip.id}`)}
@@ -291,25 +313,20 @@ export const TripList: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Remarks Display + Edit */}
-                  <div className="bg-amber-50/30 p-4 rounded-2xl border border-amber-100/50 relative group/remark">
-                    <div className="flex items-center justify-between mb-2">
-                       <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Operator Remarks</span>
-                       {!isFinal && (
-                         <button
-                           onClick={() => setActionData({
-                             tripId: trip.id, newStatus: trip.status, type: 'REMARK',
-                             title: 'Edit Deployment Remarks', initialValue: trip.remarks
-                           })}
-                           className="text-amber-400 hover:text-amber-600 opacity-0 group-hover/remark:opacity-100 transition-all"
-                         >
-                           <Edit2 size={12} />
-                         </button>
-                       )}
-                    </div>
-                    <p className="text-[10px] font-bold text-slate-600 italic leading-relaxed">
-                      {trip.remarks || "No operational notes recorded..."}
-                    </p>
+                  {/* Financial Quick View */}
+                  <div className="grid grid-cols-2 gap-3">
+                     <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-100/30">
+                        <p className="text-[8px] font-black text-amber-600 uppercase tracking-widest mb-1 flex items-center gap-1">
+                           <Droplets size={10} /> Diesel (Est)
+                        </p>
+                        <p className="text-xs font-black text-amber-700">{formatLiters(trip.dieselIssuedL || 0)}</p>
+                     </div>
+                     <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/30">
+                        <p className="text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1 flex items-center gap-1">
+                           <Receipt size={10} /> Expense (Est)
+                        </p>
+                        <p className="text-xs font-black text-emerald-700">₹{estimatedExp}</p>
+                     </div>
                   </div>
                 </div>
 

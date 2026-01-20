@@ -9,7 +9,7 @@ import { TripStatus, Trip, Tanker } from '../types.ts';
 import { formatMT, formatKm, formatLiters } from '../utils/helpers.ts';
 
 export const Reports: React.FC = () => {
-  const { trips, tankers, suppliers, customers } = useGlobalStore();
+  const { trips, tankers, suppliers, customers, getTripExpenses } = useGlobalStore();
 
   const [dateRange, setDateRange] = useState({
     from: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
@@ -72,6 +72,7 @@ export const Reports: React.FC = () => {
     tripsToProcess.forEach(t => {
       const tanker = tankers.find(v => v.id === t.tankerId);
       const loadingPoint = suppliers.find(s => s.id === t.supplierId);
+      const tripExpenseTotal = getTripExpenses(t);
 
       if (t.unloads.length === 0) {
         const row: any = {
@@ -84,6 +85,7 @@ export const Reports: React.FC = () => {
           'Actual Quantity (MT)': '',
           'Difference (MT)': '',
           'Challan Number': '',
+          'Leg Expense (Est)': tripExpenseTotal
         };
         if (!filteredByStatus) row['Trip Status'] = t.status.replace(/_/g, ' ');
         row['Remarks'] = t.remarks || '';
@@ -109,6 +111,7 @@ export const Reports: React.FC = () => {
           'Actual Quantity (MT)': actual !== null ? actual : '',
           'Difference (MT)': diff,
           'Challan Number': u.challanNumber || '',
+          'Total Trip Expense (Est)': isFirst ? tripExpenseTotal : ''
         };
 
         if (!filteredByStatus) {
@@ -146,7 +149,8 @@ export const Reports: React.FC = () => {
     const reportData = tankers.map(tanker => {
       const tankerTrips = filteredTripsByDate.filter(t => t.tankerId === tanker.id);
       const totalDist = tankerTrips.reduce((a, b) => a + Number(b.totalDistanceKm || 0), 0);
-      const estimatedTotal = tankerTrips.reduce((a, b) => {
+      const totalEx = tankerTrips.reduce((a, b) => a + getTripExpenses(b), 0);
+      const estimatedTotalDiesel = tankerTrips.reduce((a, b) => {
         const efficiency = Number(tanker.dieselAvgKmPerL || 3.5);
         const distance = Number(b.totalDistanceKm || 0);
         return a + (distance > 0 ? Math.round(distance / efficiency) : 0);
@@ -158,7 +162,8 @@ export const Reports: React.FC = () => {
         'Tanker': tanker.number,
         'Total Trips': tankerTrips.length,
         'Total Distance (KM)': totalDist,
-        'Estimated Diesel (L)': estimatedTotal,
+        'Total Expense (Standard)': totalEx,
+        'Estimated Diesel (L)': estimatedTotalDiesel,
         'Actual Diesel (L)': '',
         'Base Efficiency (KM/L)': tanker.dieselAvgKmPerL,
         'Remarks': remarks
@@ -201,7 +206,7 @@ export const Reports: React.FC = () => {
     {
       id: 'diesel-log',
       title: 'Fuel Intelligence',
-      desc: 'Fleet fuel utilization tracking with placeholders for manual entry.',
+      desc: 'Fleet fuel utilization and route expense tracking across operations.',
       icon: Fuel,
       color: 'text-amber-600',
       bg: 'bg-amber-50',

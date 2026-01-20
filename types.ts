@@ -40,6 +40,7 @@ export type Tanker = {
 
 export const TripStatus = {
   PLANNED: 'PLANNED',
+  TENTATIVE: 'TENTATIVE',
   TRANSIT_TO_SUPPLIER: 'TRANSIT_TO_SUPPLIER',
   LOADED_AT_SUPPLIER: 'LOADED_AT_SUPPLIER',
   IN_TRANSIT: 'IN_TRANSIT',
@@ -81,20 +82,33 @@ export type Trip = {
   plannedStartDate: string;
   actualEndDate?: string;
   status: TripStatus;
-  
+
   emptyRoute?: RouteData;
   unloads: UnloadStop[];
   totalLoadedMT: number;
-  
+
   dieselIssuedL: number;
   dieselUsedL: number;
   emptyDistanceKm: number;
   loadedDistanceKm: number;
   totalDistanceKm: number;
-  
+
   manualDistanceOverride?: boolean;
   manualDieselOverride?: boolean;
-  
+
   remarks: string;
   createdBy: string;
+};
+
+export type ExpenseItem = {
+  description: string;
+  amount: number;
+};
+
+export type RouteExpense = {
+  id: string;
+  startLocationId: string;
+  endLocationId: string;
+  items: ExpenseItem[];
+  totalAmount: number;
 };

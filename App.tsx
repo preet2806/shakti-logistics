@@ -9,6 +9,7 @@ import { TripForm } from './pages/TripForm';
 import { Reports } from './pages/Reports';
 import { TankerMaster } from './pages/TankerMaster';
 import { LocationMaster } from './pages/LocationMaster';
+import { ExpenseMaster } from './pages/ExpenseMaster';
 import { UserMaster } from './pages/UserMaster';
 import { Login } from './pages/Login';
 import { Profile } from './pages/Profile';
@@ -44,6 +45,7 @@ const App: React.FC = () => {
           <Route path="/trips/:id" element={<TripForm />} />
           <Route path="/masters/tankers" element={<TankerMaster />} />
           <Route path="/masters/locations" element={<LocationMaster />} />
+          <Route path="/masters/expenses" element={<ExpenseMaster />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/profile" element={<Profile />} />
 

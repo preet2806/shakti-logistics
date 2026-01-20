@@ -6,7 +6,8 @@ import {
   Plus, Trash2, MapPin, ArrowLeft, Navigation, 
   Route as RouteIcon, Clock, Map as MapIcon, 
   ChevronRight, CheckCircle2, Info, Loader2, Droplets,
-  Zap, Ruler, MousePointer2, Lock, AlertTriangle, Save
+  Zap, Ruler, MousePointer2, Lock, AlertTriangle, Save,
+  Receipt
 } from 'lucide-react';
 import { useGlobalStore } from '../store.tsx';
 import { Product, Trip, TripStatus, UnloadStop, RouteData, Location } from '../types.ts';
@@ -89,7 +90,7 @@ const InteractiveRouteMap: React.FC<{
 export const TripForm: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { tankers, suppliers, customers, addTrip, updateTrip, trips, currentUser } = useGlobalStore();
+  const { tankers, suppliers, customers, addTrip, updateTrip, trips, currentUser, getTripExpenses } = useGlobalStore();
 
   const [tankerId, setTankerId] = useState('');
   const [supplierId, setSupplierId] = useState('');
@@ -223,6 +224,15 @@ export const TripForm: React.FC = () => {
     if (!selectedTanker || totalDist === 0) return 0;
     return Math.round(totalDist / selectedTanker.dieselAvgKmPerL);
   }, [selectedTanker, totalDist]);
+
+  const estimatedExpenses = useMemo(() => {
+    const mockTrip: any = {
+      tankerId,
+      supplierId,
+      unloads
+    };
+    return getTripExpenses(mockTrip);
+  }, [tankerId, supplierId, unloads, getTripExpenses]);
 
   const addUnloadStop = () => {
     if (isFinalStatus) return;
@@ -544,7 +554,7 @@ export const TripForm: React.FC = () => {
           <div className="flex justify-end gap-6 pt-10">
             <button
               type="button"
-              onClick={() => navigate(-1)}
+              onClick={() => navigate('/trips')}
               className="px-12 py-6 bg-white text-slate-600 font-black rounded-3xl border-2 border-slate-100 shadow-sm hover:bg-slate-50 uppercase text-xs tracking-widest transition-all pointer-events-auto"
             >
               {isFinalStatus ? 'Return to Manifests' : 'Abort Planning'}
@@ -577,14 +587,30 @@ export const TripForm: React.FC = () => {
             <div className="flex-1 min-h-[520px] relative pointer-events-auto">
               <InteractiveRouteMap segments={mapSegments} activeSegmentId={activeSegmentId} />
             </div>
-            <div className="mt-10 p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 grid grid-cols-2 gap-8">
-               <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Payload</p>
-                  <p className="text-2xl font-black text-slate-900">{unloads.reduce((acc, u) => acc + Number(u.quantityMT || 0), 0).toFixed(1)} MT</p>
+            <div className="mt-10 p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 grid grid-cols-1 gap-6">
+               <div className="grid grid-cols-2 gap-8">
+                 <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Payload</p>
+                    <p className="text-2xl font-black text-slate-900">{unloads.reduce((acc, u) => acc + Number(u.quantityMT || 0), 0).toFixed(1)} MT</p>
+                 </div>
+                 <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Route Distance</p>
+                    <p className="text-2xl font-black text-blue-600">{totalDist} KM</p>
+                 </div>
                </div>
-               <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Route Distance</p>
-                  <p className="text-2xl font-black text-blue-600">{totalDist} KM</p>
+               <div className="pt-6 border-t border-slate-200 grid grid-cols-2 gap-8">
+                 <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                      <Droplets size={12} className="text-amber-500" /> Diesel (Est)
+                    </p>
+                    <p className="text-2xl font-black text-amber-600">{estimatedDiesel} L</p>
+                 </div>
+                 <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                      <Receipt size={12} className="text-emerald-500" /> Expense (Est)
+                    </p>
+                    <p className="text-2xl font-black text-emerald-600">₹{estimatedExpenses}</p>
+                 </div>
                </div>
             </div>
           </div>

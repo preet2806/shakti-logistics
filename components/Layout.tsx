@@ -13,7 +13,8 @@ import {
   User as UserIcon,
   LogOut,
   BookOpen,
-  UserCog
+  UserCog,
+  Receipt
 } from 'lucide-react';
 import { User } from '../types';
 import { useGlobalStore } from '../store.tsx';
@@ -33,6 +34,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user }) => {
     { label: 'Trips', path: '/trips', icon: Truck },
     { label: 'Tankers', path: '/masters/tankers', icon: Settings },
     { label: 'Locations', path: '/masters/locations', icon: MapPin },
+    { label: 'Expenses', path: '/masters/expenses', icon: Receipt },
     { label: 'Reports', path: '/reports', icon: FileText },
     { label: 'Profile', path: '/profile', icon: UserCog }
   ];

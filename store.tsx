@@ -1,6 +1,7 @@
+
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus, Location } from './types.ts';
+import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus, Location, RouteExpense } from './types.ts';
 import { fetchRoutes } from './utils/helpers.ts';
 
 const supabaseUrl = (typeof process !== 'undefined' && process.env.SUPABASE_URL) || 'https://jtjxeacpveaiflutxgok.supabase.co';
@@ -13,6 +14,7 @@ type StoreContextType = {
   suppliers: Supplier[];
   customers: Customer[];
   users: User[];
+  expenses: RouteExpense[];
   currentUser: User | null;
   isAuthenticated: boolean;
   loading: boolean;
@@ -33,7 +35,11 @@ type StoreContextType = {
   addUser: (u: User) => Promise<void>;
   updateUser: (u: User) => Promise<void>;
   deleteUser: (id: string) => Promise<void>;
+  addExpense: (e: RouteExpense) => Promise<void>;
+  updateExpense: (e: RouteExpense) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
   getActiveTripForTanker: (tankerId: string) => Trip | undefined;
+  getTripExpenses: (trip: Trip) => number;
 };
 
 const StoreContext = createContext<StoreContextType | null>(null);
@@ -44,24 +50,33 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [expenses, setExpenses] = useState<RouteExpense[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
-      const [sRes, cRes, tRes, trRes, uRes, usrRes] = await Promise.all([
+      const [sRes, cRes, tRes, trRes, uRes, usrRes, exRes] = await Promise.all([
         supabase.from('suppliers').select('*'),
         supabase.from('customers').select('*'),
         supabase.from('tankers').select('*'),
         supabase.from('trips').select('*').order('created_at', { ascending: false }),
         supabase.from('unloads').select('*').order('sort_order', { ascending: true }),
-        supabase.from('users').select('*')
+        supabase.from('users').select('*'),
+        supabase.from('route_expenses').select('*')
       ]);
 
       if (sRes.data) setSuppliers(sRes.data.map(s => ({ ...s, isOperational: s.is_operational !== false })));
       if (cRes.data) setCustomers(cRes.data.map(c => ({ ...c, isOperational: c.is_operational !== false })));
       if (usrRes.data) setUsers(usrRes.data);
+      if (exRes.data) setExpenses(exRes.data.map(e => ({
+        id: e.id,
+        startLocationId: e.start_location_id,
+        endLocationId: e.end_location_id,
+        items: e.items || [],
+        totalAmount: e.total_amount || 0
+      })));
       
       if (tRes.data) {
         setTankers(tRes.data.map(t => ({ 
@@ -225,10 +240,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customer_id: u.customerId,
         quantity_mt: u.quantityMT,
         unloaded_at: u.unloadedAt,
-        selected_route: u.selectedRoute, // Corrected to snake_case for DB
+        selected_route: u.selectedRoute,
         sort_order: idx,
         challan_number: u.challanNumber,
-        actual_quantity_mt: u.actualQuantityMT
+        actual_quantity_mt: u.actualQuantityMT !== undefined ? Number(u.actualQuantityMT) : null
       }));
       await supabase.from('unloads').insert(unloadRecords);
     }
@@ -256,10 +271,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           customer_id: u.customerId,
           quantity_mt: u.quantityMT,
           unloaded_at: u.unloadedAt,
-          selected_route: u.selectedRoute, // Corrected to snake_case for DB
+          selected_route: u.selectedRoute,
           sort_order: idx,
           challan_number: u.challanNumber,
-          actual_quantity_mt: u.actualQuantityMT
+          actual_quantity_mt: u.actualQuantityMT !== undefined ? Number(u.actualQuantityMT) : null
         }));
         await supabase.from('unloads').insert(unloadRecords);
       }
@@ -300,7 +315,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const addTanker = async (t: Tanker) => {
-    const { error } = await supabase.from('tankers').insert([{
+    await supabase.from('tankers').insert([{
       number: t.number,
       compatible_products: t.compatibleProducts,
       capacity_mt: t.capacityMT,
@@ -308,17 +323,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       current_location_id: t.currentLocationId,
       status: t.status
     }]);
-    
-    if (error) {
-      console.error("Supabase Error Adding Tanker:", error.message);
-      alert(`Database Error: ${error.message}`);
-    }
     await fetchData();
   };
 
   const updateTanker = async (t: Tanker) => {
     const oldTanker = tankers.find(o => o.id === t.id);
-    const { error } = await supabase.from('tankers').update({
+    await supabase.from('tankers').update({
       number: t.number,
       compatible_products: t.compatibleProducts,
       capacity_mt: t.capacityMT,
@@ -326,30 +336,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       current_location_id: t.currentLocationId,
       status: t.status
     }).eq('id', t.id);
-
-    if (error) {
-      console.error("Supabase Error Updating Tanker:", error.message);
-      alert(`Database Status Update Failed: ${error.message}. Please check if 'BREAKDOWN' is allowed in your database CHECK constraint.`);
-      return;
-    }
-
-    if (t.status === 'BREAKDOWN') {
-      const activeTrip = trips.find(tr => tr.tankerId === t.id && (BLOCKING_STATUSES as any[]).includes(tr.status));
-      if (activeTrip) {
-        const autoRemark = activeTrip.remarks 
-          ? `${activeTrip.remarks} | AUTO-CANCELLED: Asset reported BREAKDOWN.` 
-          : 'AUTO-CANCELLED: Asset reported BREAKDOWN.';
-        await supabase.from('trips').update({ 
-          status: TripStatus.CANCELLED,
-          remarks: autoRemark
-        }).eq('id', activeTrip.id);
-      }
-    }
-
     if (oldTanker && oldTanker.currentLocationId !== t.currentLocationId) {
       await recalculatePlannedTrips(t.id, t.currentLocationId, suppliers, customers);
     }
-
     await fetchData();
   };
 
@@ -365,11 +354,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateSupplier = async (s: Supplier) => {
     await supabase.from('suppliers').update({ 
-      name: s.name, 
-      address: s.address, 
-      lat: s.lat, 
-      lng: s.lng,
-      is_operational: s.isOperational 
+      name: s.name, address: s.address, lat: s.lat, lng: s.lng, is_operational: s.isOperational 
     }).eq('id', s.id);
     await fetchData();
   };
@@ -386,11 +371,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateCustomer = async (c: Customer) => {
     await supabase.from('customers').update({ 
-      name: c.name, 
-      address: c.address, 
-      lat: c.lat, 
-      lng: c.lng,
-      is_operational: c.isOperational 
+      name: c.name, address: c.address, lat: c.lat, lng: c.lng, is_operational: c.isOperational 
     }).eq('id', c.id);
     await fetchData();
   };
@@ -420,16 +401,78 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await fetchData();
   };
 
+  // Optimized Expense Methods with instant state updates
+  const addExpense = async (e: RouteExpense) => {
+    const { data, error } = await supabase.from('route_expenses').insert([{
+      start_location_id: e.startLocationId,
+      end_location_id: e.endLocationId,
+      items: e.items,
+      total_amount: e.totalAmount
+    }]).select();
+
+    if (data && data[0]) {
+      const newEx: RouteExpense = {
+        id: data[0].id,
+        startLocationId: data[0].start_location_id,
+        endLocationId: data[0].end_location_id,
+        items: data[0].items || [],
+        totalAmount: data[0].total_amount || 0
+      };
+      setExpenses(prev => [...prev, newEx]);
+    }
+  };
+
+  const updateExpense = async (e: RouteExpense) => {
+    const { error } = await supabase.from('route_expenses').update({
+      start_location_id: e.startLocationId,
+      end_location_id: e.endLocationId,
+      items: e.items,
+      total_amount: e.totalAmount
+    }).eq('id', e.id);
+
+    if (!error) {
+      setExpenses(prev => prev.map(item => item.id === e.id ? e : item));
+    }
+  };
+
+  const deleteExpense = async (id: string) => {
+    const { error } = await supabase.from('route_expenses').delete().eq('id', id);
+    if (!error) {
+      setExpenses(prev => prev.filter(item => item.id !== id));
+    }
+  };
+
+  const getTripExpenses = (trip: Trip) => {
+    let total = 0;
+    const tanker = tankers.find(t => t.id === trip.tankerId);
+    if (!tanker) return 0;
+
+    // Empty Leg
+    const emptyEx = expenses.find(e => e.startLocationId === tanker.currentLocationId && e.endLocationId === trip.supplierId);
+    if (emptyEx) total += emptyEx.totalAmount;
+
+    // Delivery Legs
+    let prevLocId = trip.supplierId;
+    trip.unloads.forEach(u => {
+      const ex = expenses.find(e => e.startLocationId === prevLocId && e.endLocationId === u.customerId);
+      if (ex) total += ex.totalAmount;
+      prevLocId = u.customerId;
+    });
+
+    return total;
+  };
+
   const getActiveTripForTanker = (tankerId: string) => {
     return trips.find(t => t.tankerId === tankerId && (BLOCKING_STATUSES as any[]).includes(t.status));
   };
 
   return (
     <StoreContext.Provider value={{
-      tankers, trips, suppliers, customers, users, currentUser, isAuthenticated, loading,
+      tankers, trips, suppliers, customers, users, currentUser, isAuthenticated, loading, expenses,
       login, logout, fetchData, addTrip, updateTrip, addTanker, updateTanker, deleteTanker,
       addSupplier, updateSupplier, deleteSupplier, addCustomer, updateCustomer, deleteCustomer,
-      addUser, updateUser, deleteUser, getActiveTripForTanker
+      addUser, updateUser, deleteUser, addExpense, updateExpense, deleteExpense,
+      getActiveTripForTanker, getTripExpenses
     }}>
       {children}
     </StoreContext.Provider>
