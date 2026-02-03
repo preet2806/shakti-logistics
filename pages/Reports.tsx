@@ -147,7 +147,9 @@ export const Reports: React.FC = () => {
 
   const handleDieselReport = () => {
     const reportData = tankers.map(tanker => {
-      const tankerTrips = filteredTripsByDate.filter(t => t.tankerId === tanker.id);
+      // Logic fix: Only include CLOSED trips for fuel efficiency analysis
+      const tankerTrips = filteredTripsByDate.filter(t => t.tankerId === tanker.id && t.status === TripStatus.CLOSED);
+
       const totalDist = tankerTrips.reduce((a, b) => a + Number(b.totalDistanceKm || 0), 0);
       const totalEx = tankerTrips.reduce((a, b) => a + getTripExpenses(b), 0);
       const estimatedTotalDiesel = tankerTrips.reduce((a, b) => {
@@ -160,8 +162,8 @@ export const Reports: React.FC = () => {
 
       return {
         'Tanker': tanker.number,
-        'Total Trips': tankerTrips.length,
-        'Total Distance (KM)': totalDist,
+        'Completed Trips': tankerTrips.length,
+        'Total Distance (KM)': totalDist.toFixed(1),
         'Total Expense (Standard)': totalEx,
         'Estimated Diesel (L)': estimatedTotalDiesel,
         'Actual Diesel (L)': '',
@@ -206,7 +208,7 @@ export const Reports: React.FC = () => {
     {
       id: 'diesel-log',
       title: 'Fuel Intelligence',
-      desc: 'Fleet fuel utilization and route expense tracking across operations.',
+      desc: 'Audits fuel utilization and expenses for completed (CLOSED) trips.',
       icon: Fuel,
       color: 'text-amber-600',
       bg: 'bg-amber-50',

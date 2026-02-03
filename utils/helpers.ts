@@ -9,11 +9,12 @@ export async function fetchRoutes(
   startLat: number, 
   startLng: number, 
   endLat: number, 
-  endLng: number
+  endLng: number,
+  signal?: AbortSignal
 ): Promise<RouteData[]> {
   try {
     const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&alternatives=true`;
-    const response = await fetch(url);
+    const response = await fetch(url, { signal });
     const data = await response.json();
 
     if (data.code !== 'Ok') return [];
@@ -24,7 +25,8 @@ export async function fetchRoutes(
       geometry: r.geometry.coordinates.map((coord: [number, number]) => [coord[1], coord[0]]), // Convert [lng, lat] to [lat, lng]
       summary: r.name || 'Main Route'
     }));
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'AbortError') return [];
     console.error("OSRM Fetch Error:", error);
     return [];
   }
@@ -51,6 +53,7 @@ function deg2rad(deg: number): number {
   return deg * (Math.PI / 180);
 }
 
+export const formatKg = (mt: number) => `${Math.round(mt * 1000)} kg`;
 export const formatMT = (qty: number) => `${qty.toFixed(2)} MT`;
 export const formatKm = (qty: number) => `${Math.round(qty)} KM`;
 export const formatLiters = (qty: number) => `${Math.round(qty)} L`;
