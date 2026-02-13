@@ -74,6 +74,11 @@ export type UnloadStop = {
   actualQuantityMT?: number;
 };
 
+export type ExpenseItem = {
+  description: string;
+  amount: number;
+};
+
 export type Trip = {
   id: string;
   tankerId: string;
@@ -98,11 +103,6 @@ export type Trip = {
 
   remarks: string;
   createdBy: string;
-};
-
-export type ExpenseItem = {
-  description: string;
-  amount: number;
 };
 
 export type RouteExpense = {

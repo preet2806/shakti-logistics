@@ -224,12 +224,6 @@ export const Reports: React.FC = () => {
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Intelligence & Reports</h1>
           <p className="text-slate-500 font-medium text-sm uppercase tracking-wider">Precision Logistics Data Export</p>
         </div>
-        <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 shadow-sm">
-          <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
-          <p className="text-[11px] font-black text-emerald-700 uppercase tracking-widest leading-tight">
-            Variance Analysis Engine Active (Planned vs Actual)
-          </p>
-        </div>
       </div>
 
       <div className="bg-white p-10 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-end gap-8">

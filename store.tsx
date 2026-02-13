@@ -91,7 +91,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (trRes.data) {
-        const mappedTrips: Trip[] = trRes.data.map(tr => {
+        setTrips(trRes.data.map(tr => {
           const tripUnloads = (uRes.data || [])
             .filter(u => u.trip_id === tr.id)
             .map(u => ({
@@ -121,15 +121,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             remarks: tr.remarks || '',
             createdBy: tr.created_by
           };
-        });
-        setTrips(mappedTrips);
+        }));
       }
     } catch (error) {
       console.error('Data Fetch Error:', error);
     }
   }, []);
 
-  const recalculatePlannedTrips = async (tankerId: string, newLocationId: string, currentSuppliers: Supplier[], currentCustomers: Customer[]) => {
+  const recalculatePlannedTripsInBackground = async (tankerId: string, newLocationId: string, currentSuppliers: Supplier[], currentCustomers: Customer[]) => {
     const allLocs = [...currentSuppliers, ...currentCustomers];
     const newLoc = allLocs.find(l => l.id === newLocationId);
     if (!newLoc) return;
@@ -148,17 +147,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const routes = await fetchRoutes(newLoc.lat, newLoc.lng, plant.lat, plant.lng);
         if (routes.length > 0) {
           const optimal = routes[0];
-          const loadedDist = Number(trip.loaded_distance || 0);
-          const totalDist = Number((optimal.distanceKm + loadedDist).toFixed(1));
-          
           await supabase.from('trips').update({
             empty_route: optimal,
             empty_distance: optimal.distanceKm,
-            total_distance: totalDist
+            total_distance: Number((optimal.distanceKm + Number(trip.loaded_distance || 0)).toFixed(1))
           }).eq('id', trip.id);
         }
       }
     }
+    await fetchData();
   };
 
   useEffect(() => {
@@ -185,40 +182,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [fetchData]);
 
   const login = async (name: string, password: string): Promise<boolean> => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('name', name)
-        .eq('password', password)
-        .single();
-
-      if (error || !data) return false;
-
-      localStorage.setItem('cryo_user', JSON.stringify(data));
-      setCurrentUser(data);
-      setIsAuthenticated(true);
-      await fetchData();
-      return true;
-    } catch (e) {
-      return false;
-    }
+    const { data, error } = await supabase.from('users').select('*').eq('name', name).eq('password', password).single();
+    if (error || !data) return false;
+    localStorage.setItem('cryo_user', JSON.stringify(data));
+    setCurrentUser(data);
+    setIsAuthenticated(true);
+    await fetchData();
+    return true;
   };
 
   const logout = () => {
     localStorage.removeItem('cryo_user');
     setCurrentUser(null);
     setIsAuthenticated(false);
-    setTankers([]);
-    setTrips([]);
-    setSuppliers([]);
-    setCustomers([]);
   };
 
   const addTrip = async (trip: Trip) => {
-    const tripId = trip.id;
-    const { error: tripError } = await supabase.from('trips').insert([{
-      id: tripId,
+    await supabase.from('trips').insert([{
+      id: trip.id,
       tanker_id: trip.tankerId,
       product_id: trip.productId,
       supplier_id: trip.supplierId,
@@ -226,7 +207,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       status: trip.status,
       empty_route: trip.emptyRoute,
       diesel_issued: trip.dieselIssuedL,
-      diesel_used: trip.dieselUsedL,
       empty_distance: trip.emptyDistanceKm,
       loaded_distance: trip.loadedDistanceKm,
       total_distance: trip.totalDistanceKm,
@@ -234,237 +214,112 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       created_by: trip.createdBy
     }]);
 
-    if (!tripError && trip.unloads.length > 0) {
-      const unloadRecords = trip.unloads.map((u, idx) => ({
-        trip_id: tripId,
+    if (trip.unloads.length > 0) {
+      await supabase.from('unloads').insert(trip.unloads.map((u, idx) => ({
+        trip_id: trip.id,
         customer_id: u.customerId,
         quantity_mt: u.quantityMT,
-        unloaded_at: u.unloadedAt,
-        selected_route: u.selectedRoute,
-        sort_order: idx,
-        challan_number: u.challanNumber,
-        actual_quantity_mt: u.actualQuantityMT !== undefined ? Number(u.actualQuantityMT) : null
-      }));
-      await supabase.from('unloads').insert(unloadRecords);
+        sort_order: idx
+      })));
     }
     await fetchData();
   };
 
   const updateTrip = async (updatedTrip: Trip) => {
-    const { error } = await supabase.from('trips').update({
-      tanker_id: updatedTrip.tankerId,
+    // 1. Update Trip Record
+    const { error: tripError } = await supabase.from('trips').update({
       status: updatedTrip.status,
-      empty_route: updatedTrip.emptyRoute,
       diesel_issued: updatedTrip.dieselIssuedL,
       diesel_used: updatedTrip.dieselUsedL,
-      empty_distance: updatedTrip.emptyDistanceKm,
-      loaded_distance: updatedTrip.loadedDistanceKm || 0,
-      total_distance: updatedTrip.totalDistanceKm,
       remarks: updatedTrip.remarks
     }).eq('id', updatedTrip.id);
 
-    if (!error) {
-      await supabase.from('unloads').delete().eq('trip_id', updatedTrip.id);
-      if (updatedTrip.unloads.length > 0) {
-        const unloadRecords = updatedTrip.unloads.map((u, idx) => ({
-          trip_id: updatedTrip.id,
-          customer_id: u.customerId,
-          quantity_mt: u.quantityMT,
-          unloaded_at: u.unloadedAt,
-          selected_route: u.selectedRoute,
-          sort_order: idx,
-          challan_number: u.challanNumber,
-          actual_quantity_mt: u.actualQuantityMT !== undefined ? Number(u.actualQuantityMT) : null
-        }));
-        await supabase.from('unloads').insert(unloadRecords);
-      }
+    if (tripError) throw tripError;
 
-      const tanker = tankers.find(t => t.id === updatedTrip.tankerId);
-      if (tanker) {
-        let newLocId = tanker.currentLocationId;
-        let newStatus = tanker.status;
+    // 2. Sync Unloads
+    await supabase.from('unloads').delete().eq('trip_id', updatedTrip.id);
+    if (updatedTrip.unloads.length > 0) {
+      await supabase.from('unloads').insert(updatedTrip.unloads.map((u, idx) => ({
+        trip_id: updatedTrip.id,
+        customer_id: u.customerId,
+        quantity_mt: u.quantityMT,
+        unloaded_at: u.unloadedAt,
+        challan_number: u.challanNumber,
+        actual_quantity_mt: u.actualQuantityMT,
+        sort_order: idx
+      })));
+    }
 
-        if (updatedTrip.status === TripStatus.TRANSIT_TO_SUPPLIER) {
-          newStatus = 'ON_TRIP';
-        } else if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) {
-          newLocId = updatedTrip.supplierId;
-          newStatus = 'ON_TRIP';
-        } else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {
-          const lastUnloaded = [...updatedTrip.unloads].reverse().find(u => !!u.unloadedAt);
-          if (lastUnloaded) newLocId = lastUnloaded.customerId;
-          newStatus = 'ON_TRIP';
-        } else if (updatedTrip.status === TripStatus.CLOSED) {
-          const last = updatedTrip.unloads[updatedTrip.unloads.length - 1];
-          if (last) newLocId = last.customerId;
-          newStatus = 'AVAILABLE';
-        } else if (updatedTrip.status === TripStatus.CANCELLED) {
-          newStatus = 'AVAILABLE';
-        }
+    // 3. Update Tanker Asset position
+    const tanker = tankers.find(t => t.id === updatedTrip.tankerId);
+    let newLocId = tanker?.currentLocationId;
+    let newStatus = updatedTrip.status === TripStatus.CLOSED ? 'AVAILABLE' : 'ON_TRIP';
 
-        if (newLocId !== tanker.currentLocationId || newStatus !== tanker.status) {
-          await supabase.from('tankers').update({ 
-            current_location_id: newLocId, 
-            status: newStatus 
-          }).eq('id', tanker.id);
-          
-          await recalculatePlannedTrips(tanker.id, newLocId, suppliers, customers);
-        }
+    if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) newLocId = updatedTrip.supplierId;
+    else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {
+        const last = [...updatedTrip.unloads].reverse().find(u => !!u.unloadedAt);
+        if (last) newLocId = last.customerId;
+    } else if (updatedTrip.status === TripStatus.CLOSED) {
+        const last = updatedTrip.unloads[updatedTrip.unloads.length - 1];
+        if (last) newLocId = last.customerId;
+    }
+
+    if (tanker) {
+      await supabase.from('tankers').update({
+        current_location_id: newLocId,
+        status: newStatus
+      }).eq('id', tanker.id);
+
+      if (newLocId !== tanker.currentLocationId) {
+        recalculatePlannedTripsInBackground(tanker.id, newLocId!, suppliers, customers);
       }
     }
-    await fetchData();
-  };
 
-  const addTanker = async (t: Tanker) => {
-    await supabase.from('tankers').insert([{
-      number: t.number,
-      compatible_products: t.compatibleProducts,
-      capacity_mt: t.capacityMT,
-      diesel_avg: t.dieselAvgKmPerL,
-      current_location_id: t.currentLocationId,
-      status: t.status
-    }]);
-    await fetchData();
-  };
-
-  const updateTanker = async (t: Tanker) => {
-    const oldTanker = tankers.find(o => o.id === t.id);
-    await supabase.from('tankers').update({
-      number: t.number,
-      compatible_products: t.compatibleProducts,
-      capacity_mt: t.capacityMT,
-      diesel_avg: t.dieselAvgKmPerL,
-      current_location_id: t.currentLocationId,
-      status: t.status
-    }).eq('id', t.id);
-    if (oldTanker && oldTanker.currentLocationId !== t.currentLocationId) {
-      await recalculatePlannedTrips(t.id, t.currentLocationId, suppliers, customers);
-    }
-    await fetchData();
-  };
-
-  const deleteTanker = async (id: string) => {
-    await supabase.from('tankers').delete().eq('id', id);
-    await fetchData();
-  };
-
-  const addSupplier = async (s: Supplier) => {
-    await supabase.from('suppliers').insert([{ name: s.name, address: s.address, lat: s.lat, lng: s.lng, is_operational: true }]);
-    await fetchData();
-  };
-
-  const updateSupplier = async (s: Supplier) => {
-    await supabase.from('suppliers').update({ 
-      name: s.name, address: s.address, lat: s.lat, lng: s.lng, is_operational: s.isOperational 
-    }).eq('id', s.id);
-    await fetchData();
-  };
-
-  const deleteSupplier = async (id: string) => {
-    await supabase.from('suppliers').update({ is_operational: false }).eq('id', id);
-    await fetchData();
-  };
-
-  const addCustomer = async (c: Customer) => {
-    await supabase.from('customers').insert([{ name: c.name, address: c.address, lat: c.lat, lng: c.lng, is_operational: true }]);
-    await fetchData();
-  };
-
-  const updateCustomer = async (c: Customer) => {
-    await supabase.from('customers').update({ 
-      name: c.name, address: c.address, lat: c.lat, lng: c.lng, is_operational: c.isOperational 
-    }).eq('id', c.id);
-    await fetchData();
-  };
-
-  const deleteCustomer = async (id: string) => {
-    await supabase.from('customers').update({ is_operational: false }).eq('id', id);
-    await fetchData();
-  };
-
-  const addUser = async (u: User) => {
-    await supabase.from('users').insert([{ name: u.name, role: u.role, password: u.password }]);
-    await fetchData();
-  };
-
-  const updateUser = async (u: User) => {
-    await supabase.from('users').update({ name: u.name, role: u.role, password: u.password }).eq('id', u.id);
-    if (currentUser && u.id === currentUser.id) {
-      const updatedUser = { ...currentUser, name: u.name, role: u.role, password: u.password };
-      setCurrentUser(updatedUser);
-      localStorage.setItem('cryo_user', JSON.stringify(updatedUser));
-    }
-    await fetchData();
-  };
-
-  const deleteUser = async (id: string) => {
-    await supabase.from('users').delete().eq('id', id);
-    await fetchData();
-  };
-
-  // Optimized Expense Methods with instant state updates
-  const addExpense = async (e: RouteExpense) => {
-    const { data, error } = await supabase.from('route_expenses').insert([{
-      start_location_id: e.startLocationId,
-      end_location_id: e.endLocationId,
-      items: e.items,
-      total_amount: e.totalAmount
-    }]).select();
-
-    if (data && data[0]) {
-      const newEx: RouteExpense = {
-        id: data[0].id,
-        startLocationId: data[0].start_location_id,
-        endLocationId: data[0].end_location_id,
-        items: data[0].items || [],
-        totalAmount: data[0].total_amount || 0
-      };
-      setExpenses(prev => [...prev, newEx]);
-    }
-  };
-
-  const updateExpense = async (e: RouteExpense) => {
-    const { error } = await supabase.from('route_expenses').update({
-      start_location_id: e.startLocationId,
-      end_location_id: e.endLocationId,
-      items: e.items,
-      total_amount: e.totalAmount
-    }).eq('id', e.id);
-
-    if (!error) {
-      setExpenses(prev => prev.map(item => item.id === e.id ? e : item));
-    }
-  };
-
-  const deleteExpense = async (id: string) => {
-    const { error } = await supabase.from('route_expenses').delete().eq('id', id);
-    if (!error) {
-      setExpenses(prev => prev.filter(item => item.id !== id));
+    // 4. Instant State Update
+    setTrips(prev => prev.map(t => t.id === updatedTrip.id ? updatedTrip : t));
+    if (tanker) {
+      setTankers(prev => prev.map(t => t.id === tanker.id ? { ...t, currentLocationId: newLocId!, status: newStatus as any } : t));
     }
   };
 
   const getTripExpenses = (trip: Trip) => {
-    let total = 0;
     const tanker = tankers.find(t => t.id === trip.tankerId);
     if (!tanker) return 0;
 
-    // Empty Leg
-    const emptyEx = expenses.find(e => e.startLocationId === tanker.currentLocationId && e.endLocationId === trip.supplierId);
-    if (emptyEx) total += emptyEx.totalAmount;
+    let total = 0;
+    const findRate = (start: string, end: string) => {
+      const ex = expenses.find(e => e.startLocationId === start && e.endLocationId === end);
+      return ex?.totalAmount || 0;
+    };
 
-    // Delivery Legs
-    let prevLocId = trip.supplierId;
+    total += findRate(tanker.currentLocationId, trip.supplierId);
+    let prevId = trip.supplierId;
     trip.unloads.forEach(u => {
-      const ex = expenses.find(e => e.startLocationId === prevLocId && e.endLocationId === u.customerId);
-      if (ex) total += ex.totalAmount;
-      prevLocId = u.customerId;
+      if (u.customerId) {
+        total += findRate(prevId, u.customerId);
+        prevId = u.customerId;
+      }
     });
 
     return total;
   };
 
-  const getActiveTripForTanker = (tankerId: string) => {
-    return trips.find(t => t.tankerId === tankerId && (BLOCKING_STATUSES as any[]).includes(t.status));
-  };
+  const addTanker = async (t: Tanker) => { await supabase.from('tankers').insert([t]); await fetchData(); };
+  const updateTanker = async (t: Tanker) => { await supabase.from('tankers').update(t).eq('id', t.id); await fetchData(); };
+  const deleteTanker = async (id: string) => { await supabase.from('tankers').delete().eq('id', id); await fetchData(); };
+  const addSupplier = async (s: Supplier) => { await supabase.from('suppliers').insert([s]); await fetchData(); };
+  const updateSupplier = async (s: Supplier) => { await supabase.from('suppliers').update(s).eq('id', s.id); await fetchData(); };
+  const deleteSupplier = async (id: string) => { await supabase.from('suppliers').update({ is_operational: false }).eq('id', id); await fetchData(); };
+  const addCustomer = async (c: Customer) => { await supabase.from('customers').insert([c]); await fetchData(); };
+  const updateCustomer = async (c: Customer) => { await supabase.from('customers').update(c).eq('id', c.id); await fetchData(); };
+  const deleteCustomer = async (id: string) => { await supabase.from('customers').update({ is_operational: false }).eq('id', id); await fetchData(); };
+  const addUser = async (u: User) => { await supabase.from('users').insert([u]); await fetchData(); };
+  const updateUser = async (u: User) => { await supabase.from('users').update(u).eq('id', u.id); await fetchData(); };
+  const deleteUser = async (id: string) => { await supabase.from('users').delete().eq('id', id); await fetchData(); };
+  const addExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').insert([{ ...e }]); await fetchData(); };
+  const updateExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').update({ ...e }).eq('id', e.id); await fetchData(); };
+  const deleteExpense = async (id: string) => { await supabase.from('route_expenses').delete().eq('id', id); await fetchData(); };
+  const getActiveTripForTanker = (tankerId: string) => trips.find(t => t.tankerId === tankerId && BLOCKING_STATUSES.includes(t.status));
 
   return (
     <StoreContext.Provider value={{
