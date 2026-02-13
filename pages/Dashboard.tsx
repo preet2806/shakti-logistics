@@ -107,6 +107,8 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
     tankers.forEach(t => {
       const activeTrip = trips.find(tr => tr.tankerId === t.id && BLOCKING_STATUSES.includes(tr.status));
       const currentLoc = [...suppliers, ...customers].find(l => l.id === t.currentLocationId);
+      const displayStatus = activeTrip ? activeTrip.status.replace(/_/g, ' ') : t.status;
+      const displayLoc = currentLoc?.name || 'In Transit';
       
       let color = '#10b981'; 
       if (t.status === 'BREAKDOWN') color = '#e11d48';
@@ -134,6 +136,7 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
             bounds.push(pos);
             L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
               .addTo(markerLayer)
+              .bindTooltip(`<strong>${t.number}</strong><br/>Status: ${displayStatus}<br/>Near: ${displayLoc}`, { direction: 'top', offset: [0, -20] })
               .on('mouseover', () => onHover(t.id))
               .on('mouseout', () => onHover(null));
           }
@@ -161,6 +164,7 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
               bounds.push(pos);
               L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
                 .addTo(markerLayer)
+                .bindTooltip(`<strong>${t.number}</strong><br/>Status: ${displayStatus}<br/>Near: ${displayLoc}`, { direction: 'top', offset: [0, -20] })
                 .on('mouseover', () => onHover(t.id))
                 .on('mouseout', () => onHover(null));
             }
@@ -177,6 +181,7 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
           bounds.push(pos);
           L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 2000 })
             .addTo(markerLayer)
+            .bindTooltip(`<strong>${t.number}</strong><br/>Status: ${displayStatus}<br/>At: ${displayLoc}`, { direction: 'top', offset: [0, -20] })
             .on('mouseover', () => onHover(t.id))
             .on('mouseout', () => onHover(null));
         }
@@ -186,6 +191,7 @@ const MapView: React.FC<MapViewProps> = ({ tankers, suppliers, customers, trips,
         bounds.push(pos);
         L.marker(pos, { icon: createTankerIcon(color, t.number), zIndexOffset: 1000 })
           .addTo(markerLayer)
+          .bindTooltip(`<strong>${t.number}</strong><br/>Status: ${displayStatus}<br/>At: ${displayLoc}`, { direction: 'top', offset: [0, -20] })
           .on('mouseover', () => onHover(t.id))
           .on('mouseout', () => onHover(null));
       }
@@ -278,39 +284,49 @@ export const Dashboard: React.FC = () => {
           
           <div className="absolute bottom-8 left-8 z-[1000] pointer-events-none">
              {hoveredTankerId ? (
-               <div className="bg-slate-900/90 backdrop-blur text-white p-6 rounded-3xl border border-slate-700 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200 min-w-[280px]">
+               <div className="bg-slate-900/90 backdrop-blur text-white p-6 rounded-3xl border border-slate-700 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200 min-w-[320px]">
                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
-                      <Truck size={20} />
+                    <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg">
+                      <Truck size={24} />
                     </div>
                     <div>
-                      <h4 className="font-black text-lg uppercase tracking-tight">{tankers.find(t => t.id === hoveredTankerId)?.number}</h4>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Asset Telemetry Active</p>
+                      <h4 className="font-black text-xl uppercase tracking-tight">{tankers.find(t => t.id === hoveredTankerId)?.number}</h4>
                     </div>
                  </div>
-                 <div className="space-y-2 border-t border-white/10 pt-4">
-                    <div className="flex justify-between">
-                       <span className="text-[9px] font-black text-slate-500 uppercase">Status</span>
-                       <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">
+                 <div className="space-y-3 border-t border-white/10 pt-5">
+                    <div className="flex justify-between items-center">
+                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Current Status</span>
+                       <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 px-3 py-1 rounded-lg">
                          {(() => {
                            const tanker = tankers.find(t => t.id === hoveredTankerId);
                            const activeTrip = trips.find(tr => tr.tankerId === hoveredTankerId && BLOCKING_STATUSES.includes(tr.status));
-                           return activeTrip ? activeTrip.status.replace(/_/g, ' ') : tanker?.status;
+                           return (activeTrip ? activeTrip.status.replace(/_/g, ' ') : tanker?.status) || 'N/A';
                          })()}
                        </span>
                     </div>
-                    <div className="flex justify-between">
-                       <span className="text-[9px] font-black text-slate-500 uppercase">Load</span>
-                       <span className="text-[9px] font-black uppercase">
-                         {trips.find(tr => tr.tankerId === hoveredTankerId && BLOCKING_STATUSES.includes(tr.status))?.productId || 'NONE'}
+                    <div className="flex justify-between items-center">
+                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Live Location</span>
+                       <span className="text-[10px] font-black uppercase text-emerald-400 truncate max-w-[180px] text-right flex items-center gap-2">
+                         <MapPin size={12} />
+                         {(() => {
+                           const tanker = tankers.find(t => t.id === hoveredTankerId);
+                           const loc = [...suppliers, ...customers].find(l => l.id === tanker?.currentLocationId);
+                           return loc?.name || 'In Transit';
+                         })()}
+                       </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Manifest Load</span>
+                       <span className="text-[10px] font-black uppercase text-slate-300">
+                         {trips.find(tr => tr.tankerId === hoveredTankerId && BLOCKING_STATUSES.includes(tr.status))?.productId || 'NO ACTIVE CARGO'}
                        </span>
                     </div>
                  </div>
                </div>
              ) : (
-               <div className="bg-white/80 backdrop-blur px-6 py-3 rounded-full border border-slate-200 shadow-xl flex items-center gap-4">
-                  <Radar size={16} className="text-blue-600" />
-                  <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Syncing Fleet Positions...</span>
+               <div className="bg-white/80 backdrop-blur px-8 py-4 rounded-full border border-slate-200 shadow-xl flex items-center gap-4 animate-pulse">
+                  <Radar size={20} className="text-blue-600" />
+                  <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Synchronizing...</span>
                </div>
              )}
           </div>
