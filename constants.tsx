@@ -1,7 +1,6 @@
 
 export const STATUS_COLORS: Record<string, string> = {
   PLANNED: 'bg-blue-100 text-blue-700',
-  TENTATIVE: 'bg-slate-100 text-slate-700',
   TRANSIT_TO_SUPPLIER: 'bg-indigo-50 text-indigo-600 border border-indigo-100',
   LOADED_AT_SUPPLIER: 'bg-amber-100 text-amber-700 font-bold border border-amber-300',
   IN_TRANSIT: 'bg-indigo-100 text-indigo-700 font-bold border border-indigo-300',

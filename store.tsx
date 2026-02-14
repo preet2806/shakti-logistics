@@ -226,6 +226,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateTrip = async (updatedTrip: Trip) => {
+
+    const tanker = tankers.find(t => t.id === updatedTrip.tankerId);
+    const oldTrip = trips.find(t => t.id === updatedTrip.id);
+    let newStatus: string | undefined = tanker?.status;
+    let newLocId: string | undefined = tanker?.currentLocationId;
     // 1. Update Trip Record
     const { error: tripError } = await supabase.from('trips').update({
       status: updatedTrip.status,
@@ -250,10 +255,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })));
     }
 
-    // 3. Update Tanker Asset position
-    const tanker = tankers.find(t => t.id === updatedTrip.tankerId);
-    let newLocId = tanker?.currentLocationId;
-    let newStatus = updatedTrip.status === TripStatus.CLOSED ? 'AVAILABLE' : 'ON_TRIP';
+    if (updatedTrip.status === TripStatus.CLOSED) {
+          // Closing a trip always makes tanker AVAILABLE
+          newStatus = 'AVAILABLE';
+    } else if (updatedTrip.status === TripStatus.CANCELLED) {
+          // If trip was already active (blocking), and now cancelled, tanker becomes AVAILABLE.
+          // If trip was PLANNED (non-blocking) and now cancelled, tanker status remains unchanged.
+          if (oldTrip && BLOCKING_STATUSES.includes(oldTrip.status)) {
+            newStatus = 'AVAILABLE';
+          }
+          // Note: If oldTrip was PLANNED, newStatus stays at whatever tanker?.status currently is.
+    } else if (BLOCKING_STATUSES.includes(updatedTrip.status)) {
+          // Moving into a blocking status makes the tanker ON_TRIP
+          newStatus = 'ON_TRIP';
+    }
 
     if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) newLocId = updatedTrip.supplierId;
     else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {

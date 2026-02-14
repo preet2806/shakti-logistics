@@ -137,7 +137,7 @@ export const TripList: React.FC = () => {
     try {
       await updateTrip({ ...trip, status: newStatus });
     } catch (err: any) {
-      alert("Failed to update status.");
+      alert(err);
     } finally {
       setProcessingTripId(null);
     }
