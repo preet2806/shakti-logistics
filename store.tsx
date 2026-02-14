@@ -332,7 +332,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateUser = async (u: User) => { await supabase.from('users').update(u).eq('id', u.id); await fetchData(); };
   const deleteUser = async (id: string) => { await supabase.from('users').delete().eq('id', id); await fetchData(); };
   const addExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').insert([{ ...e }]); await fetchData(); };
-  const updateExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').update({ ...e }).eq('id', e.id); await fetchData(); };
+  const updateExpense = async (e: RouteExpense) => {
+    await supabase
+      .from('route_expenses')
+      .update({
+        start_location_id: e.startLocationId,
+        end_location_id: e.endLocationId,
+        items: e.items,
+        total_amount: e.totalAmount
+      })
+      .eq('id', e.id);
+
+    setExpenses(prev =>
+      prev.map(ex => ex.id === e.id ? e : ex)
+    );
+  };
   const deleteExpense = async (id: string) => { await supabase.from('route_expenses').delete().eq('id', id); await fetchData(); };
   const getActiveTripForTanker = (tankerId: string) => trips.find(t => t.tankerId === tankerId && BLOCKING_STATUSES.includes(t.status));
 
