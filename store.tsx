@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus, Location, RouteExpense } from './types.ts';
+import { Trip, Tanker, Supplier, Customer, User, Product, BLOCKING_STATUSES, TripStatus, Location, RouteExpense, ExpenseHistoryEntry } from './types.ts';
 import { fetchRoutes } from './utils/helpers.ts';
 
 const supabaseUrl = (typeof process !== 'undefined' && process.env.SUPABASE_URL) || 'https://jtjxeacpveaiflutxgok.supabase.co';
@@ -37,6 +37,7 @@ type StoreContextType = {
   deleteUser: (id: string) => Promise<void>;
   addExpense: (e: RouteExpense) => Promise<void>;
   updateExpense: (e: RouteExpense) => Promise<void>;
+  approveExpense: (id: string) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   getActiveTripForTanker: (tankerId: string) => Trip | undefined;
   getTripExpenses: (trip: Trip) => number;
@@ -57,29 +58,39 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const fetchData = useCallback(async () => {
     try {
+      // Optimized: Explicit column selection to reduce egress usage
       const [sRes, cRes, tRes, trRes, uRes, usrRes, exRes] = await Promise.all([
-        supabase.from('suppliers').select('*'),
-        supabase.from('customers').select('*'),
-        supabase.from('tankers').select('*'),
-        supabase.from('trips').select('*').order('created_at', { ascending: false }),
-        supabase.from('unloads').select('*').order('sort_order', { ascending: true }),
-        supabase.from('users').select('*'),
-        supabase.from('route_expenses').select('*')
+        supabase.from('suppliers').select('id, name, address, lat, lng, is_operational'),
+        supabase.from('customers').select('id, name, address, lat, lng, is_operational'),
+        supabase.from('tankers').select('id, number, compatible_products, capacity_mt, diesel_avg, current_location_id, status'),
+        supabase.from('trips').select('id, tanker_id, product_id, supplier_id, planned_start_date, status, empty_route, diesel_issued, diesel_used, empty_distance, loaded_distance, total_distance, remarks, created_by').order('created_at', { ascending: false }),
+        supabase.from('unloads').select('trip_id, customer_id, quantity_mt, unloaded_at, selected_route, challan_number, actual_quantity_mt, sort_order').order('sort_order', { ascending: true }),
+        supabase.from('users').select('id, name, role'),
+        supabase.from('route_expenses').select('id, start_location_id, end_location_id, items, total_amount, status, history')
       ]);
 
-      if (sRes.data) setSuppliers(sRes.data.map(s => ({ ...s, isOperational: s.is_operational !== false })));
-      if (cRes.data) setCustomers(cRes.data.map(c => ({ ...c, isOperational: c.is_operational !== false })));
+      if (sRes.data) setSuppliers(sRes.data.map(s => ({
+        id: s.id, name: s.name, address: s.address, lat: s.lat, lng: s.lng, isOperational: s.is_operational !== false
+      })));
+
+      if (cRes.data) setCustomers(cRes.data.map(c => ({
+        id: c.id, name: c.name, address: c.address, lat: c.lat, lng: c.lng, isOperational: c.is_operational !== false
+      })));
+
       if (usrRes.data) setUsers(usrRes.data);
+
       if (exRes.data) setExpenses(exRes.data.map(e => ({
         id: e.id,
         startLocationId: e.start_location_id,
         endLocationId: e.end_location_id,
         items: e.items || [],
-        totalAmount: e.total_amount || 0
+        totalAmount: e.total_amount || 0,
+        status: e.status || 'PENDING',
+        history: e.history || []
       })));
-      
+
       if (tRes.data) {
-        setTankers(tRes.data.map(t => ({ 
+        setTankers(tRes.data.map(t => ({
           id: t.id,
           number: t.number,
           compatibleProducts: t.compatible_products || [],
@@ -98,7 +109,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               customerId: u.customer_id,
               quantityMT: Number(u.quantity_mt),
               unloadedAt: u.unloaded_at,
-              selectedRoute: u.selected_route, 
+              selectedRoute: u.selected_route,
               challanNumber: u.challan_number,
               actualQuantityMT: u.actual_quantity_mt !== null ? Number(u.actual_quantity_mt) : undefined
             }));
@@ -128,43 +139,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  const recalculatePlannedTripsInBackground = async (tankerId: string, newLocationId: string, currentSuppliers: Supplier[], currentCustomers: Customer[]) => {
-    const allLocs = [...currentSuppliers, ...currentCustomers];
-    const newLoc = allLocs.find(l => l.id === newLocationId);
-    if (!newLoc) return;
-
-    const { data: plannedTrips } = await supabase
-      .from('trips')
-      .select('*')
-      .eq('tanker_id', tankerId)
-      .eq('status', TripStatus.PLANNED);
-
-    if (!plannedTrips || plannedTrips.length === 0) return;
-
-    for (const trip of plannedTrips) {
-      const plant = currentSuppliers.find(s => s.id === trip.supplier_id);
-      if (plant) {
-        const routes = await fetchRoutes(newLoc.lat, newLoc.lng, plant.lat, plant.lng);
-        if (routes.length > 0) {
-          const optimal = routes[0];
-          await supabase.from('trips').update({
-            empty_route: optimal,
-            empty_distance: optimal.distanceKm,
-            total_distance: Number((optimal.distanceKm + Number(trip.loaded_distance || 0)).toFixed(1))
-          }).eq('id', trip.id);
-        }
-      }
-    }
-    await fetchData();
-  };
-
   useEffect(() => {
     const initAuth = async () => {
       const savedUser = localStorage.getItem('cryo_user');
       if (savedUser) {
         try {
           const user = JSON.parse(savedUser);
-          const { data, error } = await supabase.from('users').select('*').eq('id', user.id).single();
+          // Optimized: Explicit column selection for auth check
+          const { data, error } = await supabase.from('users').select('id, name, role').eq('id', user.id).single();
           if (data && !error) {
             setCurrentUser(data);
             setIsAuthenticated(true);
@@ -182,7 +164,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [fetchData]);
 
   const login = async (name: string, password: string): Promise<boolean> => {
-    const { data, error } = await supabase.from('users').select('*').eq('name', name).eq('password', password).single();
+    // Optimized: Explicit column selection for login verification
+    const { data, error } = await supabase.from('users').select('id, name, role').eq('name', name).eq('password', password).single();
     if (error || !data) return false;
     localStorage.setItem('cryo_user', JSON.stringify(data));
     setCurrentUser(data);
@@ -195,6 +178,30 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     localStorage.removeItem('cryo_user');
     setCurrentUser(null);
     setIsAuthenticated(false);
+  };
+
+  const approveExpense = async (id: string) => {
+    if (!currentUser || currentUser.role !== 'ADMIN') return;
+    const exp = expenses.find(e => e.id === id);
+    if (!exp) return;
+
+    const newHistoryEntry: ExpenseHistoryEntry = {
+      amount: exp.totalAmount,
+      items: exp.items,
+      approvedAt: new Date().toISOString(),
+      approvedBy: currentUser.name
+    };
+
+    const updatedHistory = [...exp.history, newHistoryEntry];
+
+    const { error } = await supabase.from('route_expenses').update({
+      status: 'APPROVED',
+      history: updatedHistory,
+      approved_at: newHistoryEntry.approvedAt,
+      approved_by: newHistoryEntry.approvedBy
+    }).eq('id', id);
+
+    if (!error) await fetchData();
   };
 
   const addTrip = async (trip: Trip) => {
@@ -226,12 +233,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateTrip = async (updatedTrip: Trip) => {
-
+    const oldTripState = trips.find(t => t.id === updatedTrip.id);
     const tanker = tankers.find(t => t.id === updatedTrip.tankerId);
-    const oldTrip = trips.find(t => t.id === updatedTrip.id);
-    let newStatus: string | undefined = tanker?.status;
-    let newLocId: string | undefined = tanker?.currentLocationId;
-    // 1. Update Trip Record
+
+    let nextTankerStatus: 'AVAILABLE' | 'ON_TRIP' | 'BREAKDOWN' = tanker?.status || 'AVAILABLE';
+    let nextLocId = tanker?.currentLocationId;
+
     const { error: tripError } = await supabase.from('trips').update({
       status: updatedTrip.status,
       diesel_issued: updatedTrip.dieselIssuedL,
@@ -241,7 +248,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (tripError) throw tripError;
 
-    // 2. Sync Unloads
     await supabase.from('unloads').delete().eq('trip_id', updatedTrip.id);
     if (updatedTrip.unloads.length > 0) {
       await supabase.from('unloads').insert(updatedTrip.unloads.map((u, idx) => ({
@@ -250,68 +256,64 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         quantity_mt: u.quantityMT,
         unloaded_at: u.unloadedAt,
         challan_number: u.challanNumber,
-        actual_quantity_mt: u.actualQuantityMT,
+        actual_quantity_mt: u.actualQuantityMT !== undefined && u.actualQuantityMT !== null ? u.actualQuantityMT : null,
         sort_order: idx
       })));
     }
 
     if (updatedTrip.status === TripStatus.CLOSED) {
-          // Closing a trip always makes tanker AVAILABLE
-          newStatus = 'AVAILABLE';
-    } else if (updatedTrip.status === TripStatus.CANCELLED) {
-          // If trip was already active (blocking), and now cancelled, tanker becomes AVAILABLE.
-          // If trip was PLANNED (non-blocking) and now cancelled, tanker status remains unchanged.
-          if (oldTrip && BLOCKING_STATUSES.includes(oldTrip.status)) {
-            newStatus = 'AVAILABLE';
-          }
-          // Note: If oldTrip was PLANNED, newStatus stays at whatever tanker?.status currently is.
-    } else if (BLOCKING_STATUSES.includes(updatedTrip.status)) {
-          // Moving into a blocking status makes the tanker ON_TRIP
-          newStatus = 'ON_TRIP';
+      nextTankerStatus = 'AVAILABLE';
+      const lastStop = updatedTrip.unloads[updatedTrip.unloads.length - 1];
+      if (lastStop) nextLocId = lastStop.customerId;
     }
-
-    if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) newLocId = updatedTrip.supplierId;
-    else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {
-        const last = [...updatedTrip.unloads].reverse().find(u => !!u.unloadedAt);
-        if (last) newLocId = last.customerId;
-    } else if (updatedTrip.status === TripStatus.CLOSED) {
-        const last = updatedTrip.unloads[updatedTrip.unloads.length - 1];
-        if (last) newLocId = last.customerId;
+    else if (updatedTrip.status === TripStatus.CANCELLED) {
+      if (oldTripState && BLOCKING_STATUSES.includes(oldTripState.status)) {
+        nextTankerStatus = 'AVAILABLE';
+      }
+    }
+    else if (BLOCKING_STATUSES.includes(updatedTrip.status)) {
+      nextTankerStatus = 'ON_TRIP';
+      if (updatedTrip.status === TripStatus.LOADED_AT_SUPPLIER) {
+        nextLocId = updatedTrip.supplierId;
+      } else if (updatedTrip.status === TripStatus.PARTIALLY_UNLOADED) {
+        const lastExecuted = [...updatedTrip.unloads].reverse().find(u => !!u.unloadedAt);
+        if (lastExecuted) nextLocId = lastExecuted.customerId;
+      }
     }
 
     if (tanker) {
       await supabase.from('tankers').update({
-        current_location_id: newLocId,
-        status: newStatus
+        current_location_id: nextLocId,
+        status: nextTankerStatus
       }).eq('id', tanker.id);
-
-      if (newLocId !== tanker.currentLocationId) {
-        recalculatePlannedTripsInBackground(tanker.id, newLocId!, suppliers, customers);
-      }
     }
 
-    // 4. Instant State Update
-    setTrips(prev => prev.map(t => t.id === updatedTrip.id ? updatedTrip : t));
-    if (tanker) {
-      setTankers(prev => prev.map(t => t.id === tanker.id ? { ...t, currentLocationId: newLocId!, status: newStatus as any } : t));
-    }
+    await fetchData();
   };
 
   const getTripExpenses = (trip: Trip) => {
     const tanker = tankers.find(t => t.id === trip.tankerId);
     if (!tanker) return 0;
 
-    let total = 0;
-    const findRate = (start: string, end: string) => {
+    const tripDate = new Date(trip.plannedStartDate).getTime();
+
+    const findApprovedRateAtDate = (start: string, end: string) => {
       const ex = expenses.find(e => e.startLocationId === start && e.endLocationId === end);
-      return ex?.totalAmount || 0;
+      if (!ex || !ex.history || ex.history.length === 0) return 0;
+
+      const validEntries = ex.history
+        .filter(h => new Date(h.approvedAt).getTime() <= tripDate)
+        .sort((a, b) => new Date(b.approvedAt).getTime() - new Date(a.approvedAt).getTime());
+
+      return validEntries.length > 0 ? validEntries[0].amount : 0;
     };
 
-    total += findRate(tanker.currentLocationId, trip.supplierId);
+    let total = 0;
+    total += findApprovedRateAtDate(tanker.currentLocationId, trip.supplierId);
     let prevId = trip.supplierId;
     trip.unloads.forEach(u => {
       if (u.customerId) {
-        total += findRate(prevId, u.customerId);
+        total += findApprovedRateAtDate(prevId, u.customerId);
         prevId = u.customerId;
       }
     });
@@ -331,22 +333,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addUser = async (u: User) => { await supabase.from('users').insert([u]); await fetchData(); };
   const updateUser = async (u: User) => { await supabase.from('users').update(u).eq('id', u.id); await fetchData(); };
   const deleteUser = async (id: string) => { await supabase.from('users').delete().eq('id', id); await fetchData(); };
-  const addExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').insert([{ ...e }]); await fetchData(); };
-  const updateExpense = async (e: RouteExpense) => {
-    await supabase
-      .from('route_expenses')
-      .update({
-        start_location_id: e.startLocationId,
-        end_location_id: e.endLocationId,
-        items: e.items,
-        total_amount: e.totalAmount
-      })
-      .eq('id', e.id);
-
-    setExpenses(prev =>
-      prev.map(ex => ex.id === e.id ? e : ex)
-    );
-  };
+  const addExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').insert([{ ...e, status: 'PENDING' }]); await fetchData(); };
+  const updateExpense = async (e: RouteExpense) => { await supabase.from('route_expenses').update({ ...e, status: 'PENDING' }).eq('id', e.id); await fetchData(); };
   const deleteExpense = async (id: string) => { await supabase.from('route_expenses').delete().eq('id', id); await fetchData(); };
   const getActiveTripForTanker = (tankerId: string) => trips.find(t => t.tankerId === tankerId && BLOCKING_STATUSES.includes(t.status));
 
@@ -355,7 +343,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       tankers, trips, suppliers, customers, users, currentUser, isAuthenticated, loading, expenses,
       login, logout, fetchData, addTrip, updateTrip, addTanker, updateTanker, deleteTanker,
       addSupplier, updateSupplier, deleteSupplier, addCustomer, updateCustomer, deleteCustomer,
-      addUser, updateUser, deleteUser, addExpense, updateExpense, deleteExpense,
+      addUser, updateUser, deleteUser, addExpense, updateExpense, approveExpense, deleteExpense,
       getActiveTripForTanker, getTripExpenses
     }}>
       {children}

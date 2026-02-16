@@ -65,12 +65,15 @@ export const ExpenseMaster: React.FC = () => {
 
     setIsSubmitting(true);
     const total = items.reduce((acc, item) => acc + Number(item.amount || 0), 0);
+    // Fix: Adding status and history properties to satisfy the RouteExpense type definition.
     const data: RouteExpense = {
       id: editingExpense?.id || crypto.randomUUID(),
       startLocationId: startId,
       endLocationId: endId,
       items: items.filter(i => i.description.trim() !== ''),
-      totalAmount: total
+      totalAmount: total,
+      status: editingExpense?.status || 'PENDING',
+      history: editingExpense?.history || []
     };
 
     try {
