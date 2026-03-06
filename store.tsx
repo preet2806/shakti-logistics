@@ -322,11 +322,51 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addTanker = async (t: Tanker) => { await supabase.from('tankers').insert([t]); await fetchData(); };
   const updateTanker = async (t: Tanker) => { await supabase.from('tankers').update(t).eq('id', t.id); await fetchData(); };
   const deleteTanker = async (id: string) => { await supabase.from('tankers').delete().eq('id', id); await fetchData(); };
-  const addSupplier = async (s: Supplier) => { await supabase.from('suppliers').insert([s]); await fetchData(); };
-  const updateSupplier = async (s: Supplier) => { await supabase.from('suppliers').update(s).eq('id', s.id); await fetchData(); };
+  const addSupplier = async (s: Supplier) => {
+    await supabase.from('suppliers').insert([{
+      id: s.id,
+      name: s.name,
+      address: s.address,
+      lat: s.lat,
+      lng: s.lng,
+      is_operational: s.isOperational !== false
+    }]);
+    await fetchData();
+  };
+
+  const updateSupplier = async (s: Supplier) => {
+    await supabase.from('suppliers').update({
+      name: s.name,
+      address: s.address,
+      lat: s.lat,
+      lng: s.lng,
+      is_operational: s.isOperational !== false
+    }).eq('id', s.id);
+    await fetchData();
+  };
   const deleteSupplier = async (id: string) => { await supabase.from('suppliers').update({ is_operational: false }).eq('id', id); await fetchData(); };
-  const addCustomer = async (c: Customer) => { await supabase.from('customers').insert([c]); await fetchData(); };
-  const updateCustomer = async (c: Customer) => { await supabase.from('customers').update(c).eq('id', c.id); await fetchData(); };
+  const addCustomer = async (c: Customer) => {
+      await supabase.from('customers').insert([{
+        id: c.id,
+        name: c.name,
+        address: c.address,
+        lat: c.lat,
+        lng: c.lng,
+        is_operational: c.isOperational !== false
+      }]);
+      await fetchData();
+    };
+
+    const updateCustomer = async (c: Customer) => {
+      await supabase.from('customers').update({
+        name: c.name,
+        address: c.address,
+        lat: c.lat,
+        lng: c.lng,
+        is_operational: c.isOperational !== false
+      }).eq('id', c.id);
+      await fetchData();
+    };
   const deleteCustomer = async (id: string) => { await supabase.from('customers').update({ is_operational: false }).eq('id', id); await fetchData(); };
   const addUser = async (u: User) => { await supabase.from('users').insert([u]); await fetchData(); };
   const updateUser = async (u: User) => { await supabase.from('users').update(u).eq('id', u.id); await fetchData(); };
